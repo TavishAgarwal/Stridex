@@ -1,0 +1,17 @@
+# FastAPI Backend Requirements
+
+# API Framework
+fastapi[all]==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# Computer Vision
+opencv-python==4.8.1.78
+mediapipe==0.10.9
+
+# Data Processing
+numpy==1.24.3
+
+# PDF Report Generation
+reportlab>=4.0
+matplotlib>=3.7.0
