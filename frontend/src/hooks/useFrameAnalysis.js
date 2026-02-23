@@ -16,7 +16,6 @@ export default function useFrameAnalysis() {
             formData.append('session_id', sessionId || sessionIdRef.current);
 
             const response = await axios.post(`${BACKEND_URL}/analyze-frame`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
                 timeout: 5000,
             });
 

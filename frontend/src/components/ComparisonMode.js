@@ -19,8 +19,7 @@ function ComparisonMode() {
     try {
       const response = await axios.post(
         `${BACKEND_URL}/analyze-video-enhanced`,
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        formData
       );
 
       if (side === 'left') {

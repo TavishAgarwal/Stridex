@@ -218,7 +218,10 @@ class TemporalState:
             knee_mean=current_k_mean,
             stride_asymmetry=current_a_mean,
             posture_score=current_p_mean,
-            fatigue_index=fatigue_score
+            fatigue_index=fatigue_score,
+            elbow_flare_score=sum(f.get('elbow_score', 0) for f in self.history) / len(self.history) if self.history else 0,
+            shoulder_asymmetry=sum(f.get('shoulder_asym', 0) for f in self.history) / len(self.history) if self.history else 0,
+            wrist_deviation=sum(f.get('wrist_dev', 0) for f in self.history) / len(self.history) if self.history else 0
         )
         
         injury_prob = ml_prediction["injury_probability"]
@@ -298,12 +301,37 @@ class TemporalEngine:
         posture_score = biomechanics.get('posture', {}).get('posture_score', 1.0)
         risk_score = risk_assessment.get('risk_score', 0)
         
+        # Extract new biomechanics
+        elbow = biomechanics.get('elbow_flare', {})
+        elbow_l = parse_angle(elbow.get('left_angle'))
+        elbow_r = parse_angle(elbow.get('right_angle'))
+        elbow_score = 0.0
+        if elbow_l is not None and elbow_r is not None:
+            avg_elbow = (elbow_l + elbow_r) / 2
+            elbow_score = max(0, 90 - avg_elbow)  # deviation from safe 90°
+        
+        shoulder_asym = biomechanics.get('shoulder_symmetry', {}).get('asymmetry_percent', 0)
+        if isinstance(shoulder_asym, str):
+            try: shoulder_asym = float(shoulder_asym.replace('%', ''))
+            except: shoulder_asym = 0.0
+        
+        wrist = biomechanics.get('wrist_alignment', {})
+        wrist_l = parse_angle(wrist.get('left_angle'))
+        wrist_r = parse_angle(wrist.get('right_angle'))
+        wrist_dev = 0.0
+        if wrist_l is not None and wrist_r is not None:
+            avg_wrist = (wrist_l + wrist_r) / 2
+            wrist_dev = abs(170 - avg_wrist)  # deviation from neutral 170°
+        
         frame_data = {
             'left_angle': left_angle,
             'right_angle': right_angle,
             'asymmetry': asymmetry,
             'posture': posture_score,
-            'risk_score': risk_score
+            'risk_score': risk_score,
+            'elbow_score': elbow_score,
+            'shoulder_asym': shoulder_asym,
+            'wrist_dev': wrist_dev
         }
         
         session.add_frame(frame_data)

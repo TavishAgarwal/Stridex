@@ -13,6 +13,15 @@ import os
 import json
 import time
 from pydantic import BaseModel
+from typing import List, Optional
+from openai import OpenAI
+
+# Initialize OpenAI client (reads OPENAI_API_KEY from env)
+openai_client = None
+try:
+    openai_client = OpenAI()
+except Exception:
+    logging.warning("OpenAI client not initialized — set OPENAI_API_KEY env var for AI features")
 from biomechanics import calculate_injury_risk
 from temporal_analysis import temporal_engine
 from pdf_generator import generate_session_report
@@ -101,12 +110,50 @@ async def analyze_frame(file: UploadFile = File(...), session_id: str = Form("de
             for lm in landmarks:
                 vis = getattr(lm, 'visibility', 0.0)
                 landmarks_data.append({"x": lm.x, "y": lm.y, "z": lm.z, "visibility": vis if vis is not None else 0.0})
+            
+            # Build per-joint risk zones for colored skeleton overlay
+            bio = risk_assessment.get('biomechanics', {})
+            risk_zones = {}  # Maps landmark index -> "high" | "medium" | "safe"
+            
+            # Knee joints (25,26 = left/right knee)
+            kv = bio.get('knee_valgus', {})
+            if kv.get('left_risk'): risk_zones['25'] = 'high'
+            if kv.get('right_risk'): risk_zones['26'] = 'high'
+            
+            # Elbow joints (13,14)
+            ef = bio.get('elbow_flare', {})
+            if ef.get('left_risk'): risk_zones['13'] = 'high'
+            elif ef.get('status') == 'fair': risk_zones['13'] = 'medium'
+            if ef.get('right_risk'): risk_zones['14'] = 'high'
+            elif ef.get('status') == 'fair': risk_zones['14'] = 'medium'
+            
+            # Shoulder joints (11,12)
+            ss = bio.get('shoulder_symmetry', {})
+            if ss.get('status') == 'concern':
+                risk_zones['11'] = 'high'
+                risk_zones['12'] = 'high'
+            elif ss.get('status') == 'fair':
+                risk_zones['11'] = 'medium'
+                risk_zones['12'] = 'medium'
+            
+            # Wrist joints (15,16)
+            wa = bio.get('wrist_alignment', {})
+            if wa.get('left_risk'): risk_zones['15'] = 'high'
+            elif wa.get('status') == 'fair': risk_zones['15'] = 'medium'
+            if wa.get('right_risk'): risk_zones['16'] = 'high'
+            elif wa.get('status') == 'fair': risk_zones['16'] = 'medium'
+            
+            # Hip joints (23,24) — posture issues
+            if bio.get('posture', {}).get('status') == 'concern':
+                risk_zones['23'] = 'high'
+                risk_zones['24'] = 'high'
                 
             athletes_data.append({
                 "athlete_id": athlete_internal_id,
                 "risk_assessment": risk_assessment,
                 "temporal_analysis": temporal_results,
-                "landmarks": landmarks_data
+                "landmarks": landmarks_data,
+                "risk_zones": risk_zones
             })
             
         return JSONResponse({
@@ -148,6 +195,8 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
         frame_results = []
         timeline = []
         frame_count = 0
+        raw_frames = {}  # frame_count -> cv2 frame for key frame extraction
+        raw_landmarks = {}  # frame_count -> pose landmarks for skeleton drawing
         
         # Process every 5th frame for performance
         frame_skip = 5
@@ -187,6 +236,8 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
                 }
                 
                 frame_results.append(frame_data)
+                raw_frames[len(frame_results) - 1] = frame  # store for key frame extraction
+                raw_landmarks[len(frame_results) - 1] = landmarks  # store for skeleton drawing
                 timeline.append({
                     "timestamp": timestamp,
                     "risk_score": risk_assessment['risk_score'],
@@ -300,33 +351,65 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
             right_angles = []
             asymmetries = []
             posture_scores = []
+            elbow_left_angles = []
+            elbow_right_angles = []
+            shoulder_asymmetries = []
+            wrist_left_angles = []
+            wrist_right_angles = []
+            body_contexts = []
+            
+            def parse_angle_val(val):
+                if val and isinstance(val, str) and '°' in val:
+                    try: return float(val.replace('°', ''))
+                    except: pass
+                return None
+            
+            def parse_pct_val(val):
+                if isinstance(val, str):
+                    try: return float(val.replace('%', ''))
+                    except: pass
+                elif isinstance(val, (int, float)):
+                    return float(val)
+                return None
             
             for f in frame_results:
                 bio = f.get('biomechanics', {})
                 kv = bio.get('knee_valgus', {})
                 sa = bio.get('stride_asymmetry', {})
                 ps = bio.get('posture', {})
+                ef = bio.get('elbow_flare', {})
+                ss = bio.get('shoulder_symmetry', {})
+                wa = bio.get('wrist_alignment', {})
+                bc = bio.get('body_context', {})
                 
                 for angle_str, target in [(kv.get('left_angle'), left_angles), (kv.get('right_angle'), right_angles)]:
-                    if angle_str and isinstance(angle_str, str) and '°' in angle_str:
-                        try:
-                            target.append(float(angle_str.replace('°', '')))
-                        except (ValueError, TypeError):
-                            pass
+                    v = parse_angle_val(angle_str)
+                    if v is not None: target.append(v)
                 
-                asym_str = sa.get('asymmetry_percent', '0%')
-                if isinstance(asym_str, str):
-                    try:
-                        asymmetries.append(float(asym_str.replace('%', '')))
-                    except (ValueError, TypeError):
-                        pass
+                v = parse_pct_val(sa.get('asymmetry_percent', '0%'))
+                if v is not None: asymmetries.append(v)
                 
                 p_val = ps.get('posture_score')
                 if p_val is not None:
-                    try:
-                        posture_scores.append(float(p_val))
-                    except (ValueError, TypeError):
-                        pass
+                    try: posture_scores.append(float(p_val))
+                    except: pass
+                
+                # New metrics
+                for angle_str, target in [(ef.get('left_angle'), elbow_left_angles), (ef.get('right_angle'), elbow_right_angles)]:
+                    v = parse_angle_val(angle_str)
+                    if v is not None: target.append(v)
+                
+                sa_pct = ss.get('asymmetry_percent')
+                if sa_pct is not None:
+                    try: shoulder_asymmetries.append(float(sa_pct))
+                    except: pass
+                
+                for angle_str, target in [(wa.get('left_angle'), wrist_left_angles), (wa.get('right_angle'), wrist_right_angles)]:
+                    v = parse_angle_val(angle_str)
+                    if v is not None: target.append(v)
+                
+                if bc.get('context'):
+                    body_contexts.append(bc['context'])
             
             # Compute aggregates
             def safe_stats(data):
@@ -434,6 +517,81 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
                 "most_common_risk_factors": [{"factor": name, "occurrences": count, "frequency_pct": round(count / n * 100, 1)} for name, count in top_factors[:5]]
             }
             
+            # --- Aggregate new biomechanics ---
+            all_elbows = elbow_left_angles + elbow_right_angles
+            avg_elbow = sum(all_elbows) / len(all_elbows) if all_elbows else 120
+            elbow_risk_frames = sum(1 for a in all_elbows if a < 70)
+            if avg_elbow >= 90:
+                elbow_plain = "Your elbows maintained a safe position — no impingement risk detected."
+                elbow_status = "good"
+            elif avg_elbow >= 70:
+                elbow_plain = "Mild elbow flare noticed in some frames. Be mindful during pressing movements."
+                elbow_status = "fair"
+            else:
+                elbow_plain = "Your elbows frequently flared out, which can pinch shoulder tendons. Keep elbows tucked closer to your body."
+                elbow_status = "concern"
+            
+            avg_shoulder_asym = sum(shoulder_asymmetries) / len(shoulder_asymmetries) if shoulder_asymmetries else 0
+            if avg_shoulder_asym < 10:
+                shoulder_plain = "Shoulders stayed level and symmetric throughout — no compensation patterns."
+                shoulder_status = "good"
+            elif avg_shoulder_asym < 20:
+                shoulder_plain = "Minor shoulder unevenness detected. Common but worth monitoring during heavy lifts."
+                shoulder_status = "fair"
+            else:
+                shoulder_plain = "Significant shoulder asymmetry — one shoulder consistently higher or forward. This can lead to neck and back pain."
+                shoulder_status = "concern"
+            
+            all_wrists = wrist_left_angles + wrist_right_angles
+            avg_wrist = sum(all_wrists) / len(all_wrists) if all_wrists else 170
+            wrist_risk_frames = sum(1 for a in all_wrists if a > 190 or a < 140)
+            if 150 <= avg_wrist <= 185:
+                wrist_plain = "Wrists maintained a neutral, safe alignment throughout."
+                wrist_status = "good"
+            elif 140 <= avg_wrist <= 190:
+                wrist_plain = "Minor wrist deviation from neutral. Keep an eye on wrist position during loaded movements."
+                wrist_status = "fair"
+            else:
+                wrist_plain = "Wrist hyperextension or excessive flexion detected. Keep wrists neutral to prevent carpal tunnel strain."
+                wrist_status = "concern"
+            
+            # Body context summary
+            if body_contexts:
+                from collections import Counter
+                ctx_counts = Counter(body_contexts)
+                dominant_ctx = ctx_counts.most_common(1)[0][0]
+            else:
+                dominant_ctx = "unknown"
+            
+            video_biomechanics["elbow_flare"] = {
+                "title": "Elbow Position",
+                "plain_english": elbow_plain,
+                "status": elbow_status,
+                "avg_angle": round(avg_elbow, 1) if all_elbows else None,
+                "frames_at_risk": elbow_risk_frames,
+                "tooltip": "Elbow flare measures how far your elbows deviate outward during pressing. Below 70° indicates impingement risk."
+            }
+            video_biomechanics["shoulder_symmetry"] = {
+                "title": "Shoulder Balance",
+                "plain_english": shoulder_plain,
+                "status": shoulder_status,
+                "avg_asymmetry": round(avg_shoulder_asym, 1),
+                "tooltip": "Shoulder symmetry compares left vs right shoulder height and forward projection. Under 10% is ideal."
+            }
+            video_biomechanics["wrist_alignment"] = {
+                "title": "Wrist Position",
+                "plain_english": wrist_plain,
+                "status": wrist_status,
+                "avg_angle": round(avg_wrist, 1) if all_wrists else None,
+                "frames_at_risk": wrist_risk_frames,
+                "tooltip": "Wrist alignment checks for hyperextension or excessive flexion. Neutral range is 150-185°."
+            }
+            video_biomechanics["body_context"] = {
+                "title": "Smart Detection",
+                "detected_view": dominant_ctx,
+                "tooltip": "Automatically detects whether the camera shows your upper body, lower body, or full body."
+            }
+            
             # --- Performance Strengths ---
             if knee_status == "good":
                 strengths.append({"area": "Knee Tracking", "icon": "🦵", "message": "Excellent knee alignment maintained throughout. Your lower body mechanics are protecting your joints well."})
@@ -441,6 +599,12 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
                 strengths.append({"area": "Bilateral Balance", "icon": "⚖️", "message": "Great symmetry between left and right sides. This indicates balanced muscle development and reduces overuse injury risk."})
             if posture_status == "good":
                 strengths.append({"area": "Core Stability", "icon": "🎯", "message": "Strong upper body alignment. Your core is doing its job stabilizing your spine during movement."})
+            if elbow_status == "good" and all_elbows:
+                strengths.append({"area": "Elbow Control", "icon": "💪", "message": "Excellent elbow positioning throughout. Your shoulders are well protected from impingement."})
+            if shoulder_status == "good" and shoulder_asymmetries:
+                strengths.append({"area": "Shoulder Symmetry", "icon": "🏋️", "message": "Your shoulders stayed level and balanced. No compensation patterns detected."})
+            if wrist_status == "good" and all_wrists:
+                strengths.append({"area": "Wrist Stability", "icon": "🤲", "message": "Wrists maintained a safe neutral alignment. This protects against carpal tunnel under load."})
             if variance < 50:
                 strengths.append({"area": "Form Consistency", "icon": "📊", "message": "Your movement quality stayed consistent across the video. This shows good body awareness and control."})
             if low_risk_count > n * 0.7:
@@ -512,10 +676,40 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
                     "exercises": ["Add 30-60s rest between sets", "Reduce working sets by 20%", "Focus on RPE 7-8 instead of max effort"]
                 })
             
+            # Elbow flare recommendation
+            if all_elbows and elbow_status == "concern":
+                priority_score += 1
+                recommendations.append({
+                    "area": "Elbow Position", "severity": "MEDIUM", "icon": "💪", "priority": priority_score,
+                    "finding": f"Elbow flare detected in {elbow_risk_frames} measurements. Average elbow angle: {avg_elbow:.0f}° (safe: >90°).",
+                    "what_to_do": "Focus on keeping your elbows tucked at roughly 45° during pressing movements. This protects the shoulder rotator cuff.",
+                    "exercises": ["Floor Press (3×10) — limits flare range", "Band Pull-Aparts (3×15)", "External Rotation with band (3×12 each)"]
+                })
+            
+            # Shoulder symmetry recommendation
+            if shoulder_asymmetries and shoulder_status == "concern":
+                priority_score += 1
+                recommendations.append({
+                    "area": "Shoulder Balance", "severity": "MEDIUM", "icon": "🏋️", "priority": priority_score,
+                    "finding": f"Shoulder asymmetry averaging {avg_shoulder_asym:.1f}%. One side is compensating.",
+                    "what_to_do": "Add unilateral shoulder work. Focus on the weaker/lower side first each set.",
+                    "exercises": ["Single-Arm Dumbbell Press (3×10 each)", "Y-T-W Raises (3×8 each)", "Thoracic Spine Mobility (2 min)"]
+                })
+            
+            # Wrist alignment recommendation
+            if all_wrists and wrist_status == "concern":
+                priority_score += 1
+                recommendations.append({
+                    "area": "Wrist Position", "severity": "MEDIUM", "icon": "🤲", "priority": priority_score,
+                    "finding": f"Wrist deviation in {wrist_risk_frames} measurements. Average wrist angle: {avg_wrist:.0f}° (safe: 150-185°).",
+                    "what_to_do": "Keep wrists stacked over your forearms. Use wrist wraps for heavy pressing if needed.",
+                    "exercises": ["Wrist Circles (2×10 each direction)", "Prayer Stretches (3×20s)", "Grippers or Towel Wringing (3×15)"]
+                })
+            
             if not recommendations:
                 recommendations.append({
                     "area": "Overall Assessment", "severity": "LOW", "icon": "✅", "priority": 0,
-                    "finding": "No significant biomechanical issues detected.",
+                    "finding": "No significant biomechanical issues detected across all 8 metrics.",
                     "what_to_do": "Your form is clean! Consider progressively increasing intensity to keep challenging yourself.",
                     "exercises": []
                 })
@@ -587,6 +781,151 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
                 
                 timeline_events.sort(key=lambda e: e['timestamp'])
         
+        # --- Key Frame Snapshots (base64 JPEG thumbnails) ---
+        key_frames = []
+        if frame_results and raw_frames:
+            # Select key frames: every 3rd + highest/lowest risk
+            key_indices = set(range(0, len(frame_results), max(1, len(frame_results) // 12)))
+            # Always include highest risk
+            max_idx = max(range(len(frame_results)), key=lambda i: frame_results[i]['risk_score'])
+            min_idx = min(range(len(frame_results)), key=lambda i: frame_results[i]['risk_score'])
+            key_indices.add(max_idx)
+            key_indices.add(min_idx)
+            
+            sorted_indices = sorted(key_indices)[:15]  # cap at 15
+            
+            # MediaPipe Pose connections for skeleton drawing
+            POSE_CONNECTIONS = [
+                (11,12),(11,13),(13,15),(12,14),(14,16),  # torso + arms
+                (11,23),(12,24),(23,24),                  # hips
+                (23,25),(25,27),(24,26),(26,28),          # legs
+                (27,29),(29,31),(28,30),(30,32),          # feet
+                (15,17),(15,19),(16,18),(16,20),          # hands
+            ]
+            
+            for idx in sorted_indices:
+                if idx not in raw_frames:
+                    continue
+                fr = raw_frames[idx].copy()  # don't mutate original
+                h, w = fr.shape[:2]
+                
+                # Draw skeleton if landmarks available
+                if idx in raw_landmarks:
+                    lm = raw_landmarks[idx]
+                    pts = {}
+                    for i, l in enumerate(lm):
+                        px, py = int(l.x * w), int(l.y * h)
+                        pts[i] = (px, py)
+                    # Draw connections (cyan lines)
+                    for (a, b) in POSE_CONNECTIONS:
+                        if a in pts and b in pts:
+                            cv2.line(fr, pts[a], pts[b], (255, 255, 0), 2, cv2.LINE_AA)
+                    # Draw joints (green dots, red for high-risk)
+                    for i, (px, py) in pts.items():
+                        color = (0, 255, 0)
+                        # Highlight knee/ankle/hip joints in red if risk is high
+                        if i in (23,24,25,26,27,28) and frame_results[idx]['risk_level'] == 'HIGH':
+                            color = (0, 0, 255)
+                        cv2.circle(fr, (px, py), 4, color, -1, cv2.LINE_AA)
+                
+                # Resize to thumbnail (480px wide for better slider quality)
+                thumb_w = 480
+                thumb_h = int(h * thumb_w / w)
+                thumb = cv2.resize(fr, (thumb_w, thumb_h))
+                _, buf = cv2.imencode('.jpg', thumb, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                b64 = base64.b64encode(buf).decode('utf-8')
+                
+                fd = frame_results[idx]
+                bio = fd.get('biomechanics', {})
+                key_frames.append({
+                    "frame_number": fd['frame_number'],
+                    "timestamp": fd['timestamp'],
+                    "risk_score": fd['risk_score'],
+                    "risk_level": fd['risk_level'],
+                    "image_base64": b64,
+                    "is_peak_risk": idx == max_idx,
+                    "is_best_form": idx == min_idx,
+                    "knee_angle": bio.get('knee_valgus', {}).get('left_angle', '--'),
+                    "asymmetry": bio.get('stride_asymmetry', {}).get('asymmetry_percent', '--'),
+                    "posture": bio.get('posture', {}).get('posture_score', '--'),
+                    "risk_factors": [rf.get('factor', '') for rf in fd.get('risk_factors', [])][:3]
+                })
+            
+            raw_frames.clear()  # free memory immediately
+            raw_landmarks.clear()
+        
+        # --- Exercise Prescriptions (structured by area) ---
+        exercise_prescriptions = []
+        rx_map = {
+            "knee": {
+                "area": "Knee Stabilization", "icon": "🦵",
+                "exercises": [
+                    {"name": "Banded Clamshells", "sets": 3, "reps": "15 each side", "description": "Lie on side with band above knees. Open top knee like a clamshell while keeping feet together.", "icon": "🔥"},
+                    {"name": "Lateral Band Walks", "sets": 3, "reps": "12 each direction", "description": "Place band above ankles, slight squat position, step sideways maintaining tension.", "icon": "🚶"},
+                    {"name": "Single-Leg Romanian Deadlift", "sets": 3, "reps": "10 each side", "description": "Stand on one leg, hinge forward at hip while extending other leg back. Builds hip stability.", "icon": "🏋️"},
+                    {"name": "Wall Sits with Band", "sets": 3, "reps": "30 seconds", "description": "Back against wall, thighs parallel, push knees outward against band resistance.", "icon": "🧱"}
+                ]
+            },
+            "stride": {
+                "area": "Balance & Symmetry", "icon": "⚖️",
+                "exercises": [
+                    {"name": "Single-Leg Balance", "sets": 3, "reps": "30s each side", "description": "Stand on one foot, eyes open then closed. Builds proprioception.", "icon": "🧘"},
+                    {"name": "Bulgarian Split Squats", "sets": 3, "reps": "10 each side", "description": "Rear foot elevated on bench, drop into lunge. Start with weaker side.", "icon": "💪"},
+                    {"name": "Step-Ups", "sets": 3, "reps": "12 each side", "description": "Step onto box with full foot contact, drive through heel. Keep equal tempo both sides.", "icon": "⬆️"}
+                ]
+            },
+            "posture": {
+                "area": "Core & Posture", "icon": "🎯",
+                "exercises": [
+                    {"name": "Dead Bugs", "sets": 3, "reps": "10 each side", "description": "Lie on back, extend opposite arm and leg while maintaining flat back. Core anti-extension drill.", "icon": "🐛"},
+                    {"name": "Bird Dogs", "sets": 3, "reps": "10 each side", "description": "On all fours, extend opposite arm and leg. Builds spinal stability.", "icon": "🐕"},
+                    {"name": "Band Pull-Aparts", "sets": 3, "reps": "15", "description": "Hold band at arm's length, pull apart by squeezing shoulder blades. Fixes rounded shoulders.", "icon": "🔗"},
+                    {"name": "Plank Hold", "sets": 3, "reps": "45 seconds", "description": "Forearms and toes, straight line from head to heels. Engage core fully.", "icon": "🧱"}
+                ]
+            },
+            "elbow": {
+                "area": "Shoulder Protection", "icon": "💪",
+                "exercises": [
+                    {"name": "Floor Press", "sets": 3, "reps": "10", "description": "Press dumbbells from floor position — naturally limits elbow flare range.", "icon": "🏋️"},
+                    {"name": "External Rotation", "sets": 3, "reps": "12 each side", "description": "Band anchored at elbow height, rotate forearm outward. Strengthens rotator cuff.", "icon": "🔄"},
+                    {"name": "Face Pulls", "sets": 3, "reps": "15", "description": "Cable or band at face height, pull toward ears with elbows high. Builds rear delts.", "icon": "🎯"}
+                ]
+            },
+            "wrist": {
+                "area": "Wrist Health", "icon": "🤲",
+                "exercises": [
+                    {"name": "Wrist Circles", "sets": 2, "reps": "10 each direction", "description": "Make fists and slowly rotate wrists. Warms up tendons and ligaments.", "icon": "🔄"},
+                    {"name": "Prayer Stretches", "sets": 3, "reps": "20 seconds", "description": "Press palms together at chest height, lower hands while keeping palms together. Stretches wrist flexors.", "icon": "🙏"},
+                    {"name": "Grippers / Towel Wringing", "sets": 3, "reps": "15", "description": "Squeeze hand gripper or wring a wet towel. Builds forearm and grip strength.", "icon": "✊"}
+                ]
+            }
+        }
+        
+        # Map recommendations to prescriptions
+        if frame_results:
+            for rec in recommendations:
+                area_lower = rec['area'].lower()
+                if 'knee' in area_lower and 'knee' in rx_map:
+                    exercise_prescriptions.append({**rx_map['knee'], "risk_level": rec['severity']})
+                elif 'balance' in area_lower or 'stride' in area_lower or 'asymmetry' in area_lower:
+                    exercise_prescriptions.append({**rx_map['stride'], "risk_level": rec['severity']})
+                elif 'posture' in area_lower or 'upper body' in area_lower:
+                    exercise_prescriptions.append({**rx_map['posture'], "risk_level": rec['severity']})
+                elif 'elbow' in area_lower:
+                    exercise_prescriptions.append({**rx_map['elbow'], "risk_level": rec['severity']})
+                elif 'wrist' in area_lower:
+                    exercise_prescriptions.append({**rx_map['wrist'], "risk_level": rec['severity']})
+            
+            # If no specific prescriptions, add general mobility
+            if not exercise_prescriptions:
+                exercise_prescriptions.append({
+                    "area": "General Mobility", "icon": "🧘", "risk_level": "LOW",
+                    "exercises": [
+                        {"name": "Dynamic Warm-Up", "sets": 1, "reps": "5 minutes", "description": "Leg swings, arm circles, hip circles, high knees. Prepares joints for movement.", "icon": "🔥"},
+                        {"name": "Foam Rolling", "sets": 1, "reps": "2 minutes per area", "description": "Roll quads, IT band, calves, and upper back. Reduces tightness and improves range.", "icon": "🧽"}
+                    ]
+                })
+        
         return JSONResponse({
             "success": True,
             "video_info": {
@@ -602,7 +941,9 @@ async def analyze_video_enhanced(file: UploadFile = File(...)):
             "fatigue_projection": fatigue_projection,
             "timeline": timeline,
             "timeline_events": timeline_events,
-            "frames": frame_results
+            "frames": frame_results,
+            "key_frames": key_frames,
+            "exercise_prescriptions": exercise_prescriptions
         })
             
     except Exception as e:
@@ -675,6 +1016,132 @@ def get_history():
                 except (json.JSONDecodeError, ValueError):
                     pass
     return history
+
+# ─── AI Chat Endpoint ───────────────────────────────────────────────────────
+
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
+class ChatRequest(BaseModel):
+    messages: List[ChatMessage]
+    context: Optional[dict] = None
+
+SPORT_SCIENCE_SYSTEM_PROMPT = """You are StrideX AI, an expert sports biomechanics and injury prevention assistant. 
+You help athletes and coaches understand their movement analysis results and provide evidence-based advice.
+
+Your expertise includes:
+- Biomechanical analysis (knee valgus, stride asymmetry, posture alignment)
+- Injury risk assessment and prevention strategies
+- Exercise prescription for corrective movements
+- Training load management and periodization
+- Sport-specific technique optimization
+- Recovery and rehabilitation guidance
+
+Keep responses concise, practical, and athlete-friendly. Use bullet points for actionable advice.
+If analysis data is provided as context, reference specific metrics in your answers.
+Always prioritize safety — recommend consulting a professional for serious concerns."""
+
+@app.post("/chat")
+async def chat(request: ChatRequest):
+    if not openai_client:
+        return {"response": "AI chat is not configured. Please set the OPENAI_API_KEY environment variable and restart the server."}
+    
+    try:
+        system_content = SPORT_SCIENCE_SYSTEM_PROMPT
+        if request.context:
+            system_content += f"\n\nCurrent athlete analysis context:\n{json.dumps(request.context, indent=2, default=str)}"
+        
+        messages = [{"role": "system", "content": system_content}]
+        for msg in request.messages:
+            messages.append({"role": msg.role, "content": msg.content})
+        
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=1024,
+            temperature=0.7,
+        )
+        
+        return {"response": response.choices[0].message.content}
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        return {"response": f"Sorry, I encountered an error. Please try again. ({str(e)[:100]})"}
+
+
+# ─── AI Workout Plan Generation ─────────────────────────────────────────────
+
+class WorkoutPlanRequest(BaseModel):
+    analysis_data: dict
+    athlete_name: Optional[str] = "Athlete"
+    sport: Optional[str] = "Running"
+
+@app.post("/generate-workout-plan")
+async def generate_workout_plan(request: WorkoutPlanRequest):
+    if not openai_client:
+        return {"error": "AI not configured. Set OPENAI_API_KEY env var."}
+    
+    try:
+        prompt = f"""Based on the following biomechanical analysis data for {request.athlete_name} ({request.sport}), 
+generate a comprehensive, personalized weekly workout plan.
+
+Analysis Data:
+{json.dumps(request.analysis_data, indent=2, default=str)}
+
+Return a JSON object with this exact structure:
+{{
+  "plan_title": "Personalized Corrective Workout Plan",
+  "athlete": "{request.athlete_name}",
+  "sport": "{request.sport}",
+  "overview": "Brief 2-sentence overview of the plan's goals",
+  "warmup": [
+    {{"name": "Exercise name", "duration": "2 min", "description": "How to do it"}}
+  ],
+  "main_workout": [
+    {{"name": "Exercise name", "sets": 3, "reps": "12 each side", "rest": "60s", "description": "How to do it", "target_area": "Knee/Posture/Core/etc", "priority": "high/medium/low"}}
+  ],
+  "cooldown": [
+    {{"name": "Exercise name", "duration": "2 min", "description": "How to do it"}}
+  ],
+  "weekly_schedule": [
+    {{"day": "Monday", "focus": "Lower Body Corrective", "intensity": "Moderate"}},
+    {{"day": "Tuesday", "focus": "Active Recovery", "intensity": "Low"}}
+  ],
+  "key_notes": ["Important note 1", "Important note 2"]
+}}
+
+Provide 4-6 warmup exercises, 8-12 main workout exercises (prioritized by the analysis findings), 
+4-6 cooldown stretches, and a full 7-day weekly schedule. 
+Focus exercises on the specific biomechanical issues identified in the analysis.
+Return ONLY valid JSON, no markdown formatting."""
+
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are an expert sports physiotherapist and strength coach. Return only valid JSON."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=3000,
+            temperature=0.7,
+        )
+        
+        raw = response.choices[0].message.content.strip()
+        # Strip markdown code fences if present
+        if raw.startswith("```"):
+            raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+        
+        plan = json.loads(raw)
+        return {"plan": plan}
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse workout plan JSON: {raw[:200]}")
+        return {"error": "Failed to parse AI response. Please try again."}
+    except Exception as e:
+        logger.error(f"Workout plan error: {e}")
+        return {"error": f"Failed to generate workout plan: {str(e)[:100]}"}
+
 
 if __name__ == "__main__":
     import uvicorn

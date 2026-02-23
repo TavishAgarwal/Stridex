@@ -12,11 +12,11 @@ export default function LoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
-    const { login, loginWithGoogle, isLoggedIn } = useAuth();
+    const { login, loginWithGoogle, loginAsGuest, isLoggedIn } = useAuth();
     const navigate = useNavigate();
 
     useEffect(() => {
-        if (isLoggedIn) navigate('/dashboard', { replace: true });
+        if (isLoggedIn) navigate('/app', { replace: true });
     }, [isLoggedIn, navigate]);
 
     // Initialize Google Sign-In
@@ -46,7 +46,7 @@ export default function LoginPage() {
         try {
             const payload = JSON.parse(atob(response.credential.split('.')[1]));
             loginWithGoogle({ email: payload.email, name: payload.name, picture: payload.picture });
-            navigate('/dashboard');
+            navigate('/app');
         } catch {
             setError('Google sign-in failed. Please try again.');
         }
@@ -58,7 +58,7 @@ export default function LoginPage() {
         if (!email || !password) { setError('Please fill in all fields.'); return; }
         try {
             login(email, password);
-            navigate('/dashboard');
+            navigate('/app');
         } catch (err) {
             setError(err.message);
         }
@@ -119,12 +119,24 @@ export default function LoginPage() {
                             </Button>
                         </form>
 
-                        <p className="text-center text-sm text-gray-500">
-                            Don't have an account?{' '}
-                            <Link to="/signup" className="font-semibold text-primary-600 hover:text-primary-700 no-underline">
-                                Sign up
-                            </Link>
-                        </p>
+                        <div className="text-center space-y-4">
+                            <p className="text-sm text-gray-500">
+                                Don't have an account?{' '}
+                                <Link to="/signup" className="font-semibold text-primary-600 hover:text-primary-700 no-underline">
+                                    Sign up
+                                </Link>
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    loginAsGuest();
+                                    navigate('/app');
+                                }}
+                                className="text-sm font-medium text-gray-400 hover:text-gray-600 transition-colors"
+                            >
+                                Continue as Guest
+                            </button>
+                        </div>
                     </Card>
                 </div>
             </div>

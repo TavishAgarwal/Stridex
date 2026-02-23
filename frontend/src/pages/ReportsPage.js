@@ -5,24 +5,65 @@ import Sidebar from '../components/layout/Sidebar';
 import Card from '../components/shared/Card';
 import Button from '../components/shared/Button';
 import useSessionHistory from '../hooks/useSessionHistory';
-import { BRAND, BACKEND_URL } from '../config/siteConfig';
-import axios from 'axios';
+import { BRAND } from '../config/siteConfig';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 export default function ReportsPage() {
     const navigate = useNavigate();
     const { sessions, loading } = useSessionHistory();
 
-    const handleDownload = async (sessionId) => {
+    const handleDownload = (sessionId) => {
+        const session = sessions.find(s => s.session_id === sessionId);
+        if (!session) { alert('Session data not found.'); return; }
+
         try {
-            const res = await axios.get(`${BACKEND_URL}/generate-report/${sessionId}`, { responseType: 'blob' });
-            const url = window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `stridex_report_${sessionId}.pdf`;
-            a.click();
-            window.URL.revokeObjectURL(url);
-        } catch {
-            alert('Report generation failed — no data available for this session.');
+            const doc = new jsPDF();
+            const pw = doc.internal.pageSize.getWidth();
+
+            // Header
+            doc.setFillColor(30, 58, 138);
+            doc.rect(0, 0, pw, 30, 'F');
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(20);
+            doc.setFont('helvetica', 'bold');
+            doc.text('STRIDEX-AI Session Report', pw / 2, 18, { align: 'center' });
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`${sessionId} • ${session.timestamp ? new Date(session.timestamp * 1000).toLocaleString() : 'N/A'}`, pw / 2, 26, { align: 'center' });
+
+            let y = 42;
+            doc.setTextColor(0, 0, 0);
+
+            // Session summary table
+            doc.setFontSize(14); doc.setFont('helvetica', 'bold');
+            doc.text('Session Summary', 14, y); y += 4;
+            autoTable(doc, {
+                startY: y,
+                head: [['Metric', 'Value']],
+                body: [
+                    ['Session ID', sessionId],
+                    ['Average Risk', `${session.avg_risk || 0}%`],
+                    ['Performance Score', `${session.performance_score || 'N/A'}/100`],
+                    ['Max Fatigue', `${session.max_fatigue || 0}%`],
+                    ['Frames Analyzed', `${session.rep_count || 'N/A'}`],
+                    ['Sport Mode', session.sport_mode || 'default'],
+                    ['Date', session.timestamp ? new Date(session.timestamp * 1000).toLocaleString() : 'N/A'],
+                ],
+                theme: 'striped',
+                headStyles: { fillColor: [30, 58, 138], textColor: 255 },
+                margin: { left: 14, right: 14 },
+                styles: { fontSize: 10 },
+            });
+
+            // Footer
+            doc.setFontSize(7); doc.setTextColor(150);
+            doc.text(`STRIDEX-AI • Generated ${new Date().toISOString()}`, pw / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
+
+            doc.save(`stridex_report_${sessionId}.pdf`);
+        } catch (err) {
+            console.error(err);
+            alert('PDF generation failed.');
         }
     };
 

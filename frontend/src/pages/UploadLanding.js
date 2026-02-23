@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { useDropzone } from 'react-dropzone';
 import { motion, AnimatePresence } from 'framer-motion';
 import Webcam from 'react-webcam';
@@ -33,8 +34,9 @@ const POSE_CONNECTIONS = [
 function VideoAnalysisPanel() {
     const [selectedFile, setSelectedFile] = useState(null);
     const [result, setResult] = useState(null);
-    const { analyze, loading, progress } = useVideoAnalysis();
+    const { analyze, loading, progress, error } = useVideoAnalysis();
     const navigate = useNavigate();
+    const { isGuest } = useAuth();
 
     const onDrop = useCallback((acceptedFiles) => {
         if (acceptedFiles.length > 0) { setSelectedFile(acceptedFiles[0]); setResult(null); }
@@ -57,6 +59,7 @@ function VideoAnalysisPanel() {
     const summary = result?.analysis_summary || {};
     const score = summary.overall_video_score ?? 0;
     const category = summary.risk_category || '';
+    const color = summary.risk_color || 'gray';
     const explanation = summary.what_this_means || '';
     const strengths = result?.strengths || [];
 
@@ -93,6 +96,12 @@ function VideoAnalysisPanel() {
                     {loading && (
                         <div className="w-full bg-white/20 rounded-full h-2 mt-3">
                             <div className="bg-white h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
+                        </div>
+                    )}
+                    {error && (
+                        <div className="bg-danger/10 border border-danger/30 text-danger px-4 py-3 rounded-xl mt-4">
+                            <p className="text-sm font-bold">Analysis Failed</p>
+                            <p className="text-xs mt-1">{error}</p>
                         </div>
                     )}
                 </div>
@@ -136,10 +145,20 @@ function VideoAnalysisPanel() {
                                 )}
                             </div>
                         </div>
-                        <Button variant="primary" className="w-full justify-center" iconRight="→"
-                            onClick={() => navigate('/analysis', { state: { analysisData: result, fileName: selectedFile?.name } })}>
-                            Show Full Analysis
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                            <Button variant="primary" className="flex-1 justify-center" iconRight="→"
+                                onClick={() => {
+                                    try {
+                                        const st = isGuest ? sessionStorage : localStorage;
+                                        const history = JSON.parse(st.getItem('stridex_sessions') || '[]');
+                                        history.unshift({ date: new Date().toISOString(), score, category, fileName: selectedFile?.name });
+                                        st.setItem('stridex_sessions', JSON.stringify(history.slice(0, 20)));
+                                    } catch (_) { }
+                                    navigate('/analysis', { state: { analysisData: result, fileName: selectedFile?.name } });
+                                }}>
+                                Show Full Analysis
+                            </Button>
+                        </div>
                     </Card>
                 </motion.div>
             )}
@@ -148,22 +167,39 @@ function VideoAnalysisPanel() {
 }
 
 /* ─────────────────────────────────────────────
-   Draw skeleton on canvas
+   Draw skeleton on canvas (risk-colored)
    ───────────────────────────────────────────── */
-function drawSkeleton(ctx, landmarks, width, height) {
+const RISK_COLORS = { high: '#ef4444', medium: '#f59e0b', safe: '#00ff88' };
+
+function drawSkeleton(ctx, landmarks, width, height, riskZones = {}) {
     if (!landmarks || landmarks.length === 0) return;
     ctx.clearRect(0, 0, width, height);
 
-    // Draw connections
-    ctx.strokeStyle = '#00ff88';
+    const getJointColor = (idx) => {
+        const zone = riskZones[String(idx)];
+        return RISK_COLORS[zone] || RISK_COLORS.safe;
+    };
+
+    // Draw connections with risk-aware coloring
     ctx.lineWidth = 3;
-    ctx.shadowBlur = 6;
-    ctx.shadowColor = '#00ff88';
     for (const [a, b] of POSE_CONNECTIONS) {
         const la = landmarks[a];
         const lb = landmarks[b];
         if (!la || !lb) continue;
         if ((la.visibility || 0) < 0.4 || (lb.visibility || 0) < 0.4) continue;
+
+        const colorA = getJointColor(a);
+        const colorB = getJointColor(b);
+        // Use the higher-risk color for the connection
+        const connColor = (colorA === RISK_COLORS.high || colorB === RISK_COLORS.high)
+            ? RISK_COLORS.high
+            : (colorA === RISK_COLORS.medium || colorB === RISK_COLORS.medium)
+                ? RISK_COLORS.medium
+                : RISK_COLORS.safe;
+
+        ctx.strokeStyle = connColor;
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = connColor;
         ctx.beginPath();
         ctx.moveTo(la.x * width, la.y * height);
         ctx.lineTo(lb.x * width, lb.y * height);
@@ -171,13 +207,15 @@ function drawSkeleton(ctx, landmarks, width, height) {
     }
     ctx.shadowBlur = 0;
 
-    // Draw joints
+    // Draw joints with risk coloring
     for (let i = 0; i < landmarks.length; i++) {
         const lm = landmarks[i];
         if (!lm || (lm.visibility || 0) < 0.4) continue;
+        const color = getJointColor(i);
+        const radius = (color !== RISK_COLORS.safe) ? 7 : 5;
         ctx.beginPath();
-        ctx.arc(lm.x * width, lm.y * height, 5, 0, 2 * Math.PI);
-        ctx.fillStyle = '#00ff88';
+        ctx.arc(lm.x * width, lm.y * height, radius, 0, 2 * Math.PI);
+        ctx.fillStyle = color;
         ctx.fill();
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 1.5;
@@ -194,7 +232,32 @@ function LiveCameraPanel() {
     const intervalRef = useRef(null);
     const [isRecording, setIsRecording] = useState(false);
     const [sessionTime, setSessionTime] = useState(0);
+    const [voiceEnabled, setVoiceEnabled] = useState(false);
+    const lastSpokenRef = useRef(0);
     const { analyzeFrame, latestResult, isConnected, latency, resetSession } = useFrameAnalysis();
+
+    // Voice Alerts — speak warnings when risk exceeds threshold
+    useEffect(() => {
+        if (!voiceEnabled || !isRecording) return;
+        const athlete = latestResult?.athletes?.[0];
+        const riskScore = athlete?.risk_assessment?.risk_score ?? 0;
+        const now = Date.now();
+        if (riskScore >= 70 && now - lastSpokenRef.current > 8000) {
+            lastSpokenRef.current = now;
+            const factors = athlete?.risk_assessment?.risk_factors || [];
+            const topFactor = factors[0]?.factor || 'movement';
+            const msg = new SpeechSynthesisUtterance(`Warning: high injury risk at ${riskScore} percent. Check your ${topFactor.toLowerCase()}.`);
+            msg.rate = 1.1; msg.pitch = 1.0;
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(msg);
+        } else if (riskScore >= 40 && now - lastSpokenRef.current > 15000) {
+            lastSpokenRef.current = now;
+            const msg = new SpeechSynthesisUtterance(`Moderate risk detected. Focus on your form.`);
+            msg.rate = 1.0;
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(msg);
+        }
+    }, [latestResult, voiceEnabled, isRecording]);
 
     useEffect(() => {
         let t;
@@ -212,7 +275,7 @@ function LiveCameraPanel() {
             canvas.width = video.videoWidth || 640;
             canvas.height = video.videoHeight || 480;
             const ctx = canvas.getContext('2d');
-            drawSkeleton(ctx, landmarks, canvas.width, canvas.height);
+            drawSkeleton(ctx, landmarks, canvas.width, canvas.height, athlete?.risk_zones || {});
         }
     }, [latestResult]);
 
@@ -237,6 +300,10 @@ function LiveCameraPanel() {
     const kv = bio.knee_valgus || {};
     const sa = bio.stride_asymmetry || {};
     const posture = bio.posture || {};
+    const ef = bio.elbow_flare || {};
+    const ss = bio.shoulder_symmetry || {};
+    const wa = bio.wrist_alignment || {};
+    const bc = bio.body_context || {};
     const riskScore = risk.risk_score ?? 0;
     const riskLevel = risk.risk_level || '';
     const riskFactors = risk.risk_factors || [];
@@ -254,6 +321,11 @@ function LiveCameraPanel() {
     const rightAngle = parseAngle(kv.right_angle);
     const asymmetry = parsePct(sa.asymmetry_percent);
     const postureScore = posture.posture_score ?? 1;
+    const elbowL = parseAngle(ef.left_angle);
+    const elbowR = parseAngle(ef.right_angle);
+    const shoulderAsym = ss.asymmetry_percent ?? 0;
+    const wristL = parseAngle(wa.left_angle);
+    const wristR = parseAngle(wa.right_angle);
 
     const trendIcon = trendDir === 'degrading' ? '📉' : trendDir === 'improving' ? '📈' : '➡️';
     const trendColor = trendDir === 'degrading' ? 'text-danger' : trendDir === 'improving' ? 'text-emerald' : 'text-gray-500';
@@ -390,6 +462,33 @@ function LiveCameraPanel() {
                             </div>
                         </div>
                     </Card>
+
+                    {/* New biomechanics cards */}
+                    <Card className="py-4 px-5">
+                        <div className="grid grid-cols-3 gap-3">
+                            <div>
+                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">ELBOW (L/R)</p>
+                                <p className={`text-xl font-bold ${(ef.left_risk || ef.right_risk) ? 'text-danger' : 'text-gray-900'}`}>{elbowL || '--'}° / {elbowR || '--'}°</p>
+                                <StatusBadge label={ef.status || 'N/A'} variant={ef.status === 'concern' ? 'danger' : ef.status === 'fair' ? 'warning' : 'success'} />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">SHOULDER</p>
+                                <p className={`text-xl font-bold ${shoulderAsym > 15 ? 'text-danger' : shoulderAsym > 10 ? 'text-amber-dark' : 'text-gray-900'}`}>{typeof shoulderAsym === 'number' ? shoulderAsym.toFixed(1) : '--'}%</p>
+                                <StatusBadge label={ss.status || 'N/A'} variant={ss.status === 'concern' ? 'danger' : ss.status === 'fair' ? 'warning' : 'success'} />
+                            </div>
+                            <div>
+                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">WRIST (L/R)</p>
+                                <p className={`text-xl font-bold ${(wa.left_risk || wa.right_risk) ? 'text-danger' : 'text-gray-900'}`}>{wristL || '--'}° / {wristR || '--'}°</p>
+                                <StatusBadge label={wa.status || 'N/A'} variant={wa.status === 'concern' ? 'danger' : wa.status === 'fair' ? 'warning' : 'success'} />
+                            </div>
+                        </div>
+                    </Card>
+
+                    {bc.label && (
+                        <div className="px-3 py-2 bg-primary-50 text-primary-700 rounded-xl text-xs font-semibold text-center">
+                            🎯 Smart Detection: {bc.label} — {bc.description}
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -400,6 +499,28 @@ function LiveCameraPanel() {
                     <Button variant="danger" icon="⏹" onClick={handleStop}>Stop Rec</Button>
                 )}
                 <Button variant="secondary" icon="🔄" onClick={handleReset}>Reset Session</Button>
+                <Button variant="secondary" icon={voiceEnabled ? '🔊' : '🔇'}
+                    onClick={() => { setVoiceEnabled(!voiceEnabled); if (voiceEnabled) window.speechSynthesis.cancel(); }}
+                    className={voiceEnabled ? 'ring-2 ring-primary-400' : ''}>
+                    {voiceEnabled ? 'Voice On' : 'Voice Off'}
+                </Button>
+                <Button variant="secondary" icon="📸"
+                    onClick={() => {
+                        const video = webcamRef.current?.video;
+                        const canvas = canvasRef.current;
+                        if (!video) return;
+                        const c2 = document.createElement('canvas');
+                        c2.width = video.videoWidth || 640; c2.height = video.videoHeight || 480;
+                        const ctx = c2.getContext('2d');
+                        ctx.drawImage(video, 0, 0, c2.width, c2.height);
+                        if (canvas) ctx.drawImage(canvas, 0, 0, c2.width, c2.height);
+                        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, c2.height - 40, c2.width, 40);
+                        ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Inter';
+                        ctx.fillText(`STRIDEX-AI • Risk: ${riskScore}% • ${riskLevel} • ${new Date().toLocaleString()}`, 10, c2.height - 15);
+                        c2.toBlob(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `stridex_screenshot_${Date.now()}.png`; a.click(); });
+                    }}>
+                    Screenshot
+                </Button>
                 <div className="ml-auto flex items-center gap-2 text-sm text-gray-600">
                     <span>⏱</span>
                     <span className="font-mono font-bold text-gray-900">Session Time: {fmt(sessionTime)}</span>
@@ -508,6 +629,12 @@ function CompareVideosPanel() {
                 >
                     {loading ? 'Analyzing…' : 'Compare Now'}
                 </Button>
+                {(analyzerA.error || analyzerB.error) && (
+                    <div className="bg-danger/10 border border-danger/30 text-danger px-4 py-3 rounded-xl mt-4">
+                        <p className="text-sm font-bold">Analysis Failed</p>
+                        <p className="text-xs mt-1">{analyzerA.error || analyzerB.error}</p>
+                    </div>
+                )}
             </Card>
 
             {(resultA || resultB) && (
@@ -526,6 +653,32 @@ function CompareVideosPanel() {
                                     <DeltaIndicator delta={riskDelta} label="Average Risk" invertColors={true} />
                                     <DeltaIndicator delta={maxDelta} label="Peak Risk" invertColors={true} />
                                 </div>
+                                {/* Biomechanics comparison */}
+                                {(() => {
+                                    const bioA = resultA?.video_biomechanics || {};
+                                    const bioB = resultB?.video_biomechanics || {};
+                                    const metrics = ['knee_valgus', 'stride_asymmetry', 'posture', 'elbow_flare', 'shoulder_symmetry', 'wrist_alignment'];
+                                    const getVal = (bio, key) => {
+                                        const m = bio[key] || {};
+                                        if (m.avg_angle !== undefined && m.avg_angle !== null) return m.avg_angle;
+                                        if (m.avg_score !== undefined && m.avg_score !== null) return m.avg_score * 100;
+                                        if (m.avg_asymmetry !== undefined && m.avg_asymmetry !== null) return m.avg_asymmetry;
+                                        return null;
+                                    };
+                                    const items = metrics.map(k => ({ title: (bioA[k] || bioB[k] || {}).title || k, a: getVal(bioA, k), b: getVal(bioB, k) })).filter(i => i.a !== null && i.b !== null);
+                                    if (!items.length) return null;
+                                    return (
+                                        <div className="mt-4 pt-4 border-t border-surface-border">
+                                            <p className="text-xs font-bold uppercase text-gray-400 mb-3">Biomechanics Comparison</p>
+                                            <div className="space-y-2">
+                                                {items.map((it, i) => {
+                                                    const d = it.b - it.a;
+                                                    return <DeltaIndicator key={i} delta={d} label={it.title} invertColors={it.title.includes('Risk') || it.title.includes('Asymmetry')} />;
+                                                })}
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                                 <div className={`mt-4 p-3 rounded-xl border text-sm ${riskDelta < 0 ? 'bg-emerald/5 border-emerald/20 text-emerald-dark' : riskDelta > 0 ? 'bg-danger/5 border-danger/20 text-danger' : 'bg-gray-50 border-surface-border text-gray-500'}`}>
                                     {riskDelta < 0
                                         ? `✅ Great improvement! Average risk decreased by ${Math.abs(riskDelta).toFixed(1)}%. Your technique is getting safer.`
@@ -547,7 +700,12 @@ function CompareVideosPanel() {
    MAIN PAGE
    ───────────────────────────────────────────── */
 export default function UploadLanding() {
+    const { isGuest } = useAuth();
     const [activeMode, setActiveMode] = useState('video');
+    const [athleteProfile, setAthleteProfile] = useState(() => localStorage.getItem('stridex_profile') || 'amateur');
+    const [showHistory, setShowHistory] = useState(false);
+    const store = isGuest ? sessionStorage : localStorage;
+    const recentSessions = JSON.parse(store.getItem('stridex_sessions') || '[]').slice(0, 5);
 
     return (
         <div className="min-h-screen bg-surface-secondary">
@@ -589,19 +747,11 @@ export default function UploadLanding() {
                         </div>
 
                         {/* Content area */}
-                        <AnimatePresence mode="wait">
-                            <motion.div
-                                key={activeMode}
-                                initial={{ opacity: 0, y: 12 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0, y: -12 }}
-                                transition={{ duration: 0.25 }}
-                            >
-                                {activeMode === 'video' && <VideoAnalysisPanel />}
-                                {activeMode === 'camera' && <LiveCameraPanel />}
-                                {activeMode === 'compare' && <CompareVideosPanel />}
-                            </motion.div>
-                        </AnimatePresence>
+                        <div className="mt-6">
+                            {activeMode === 'video' && <VideoAnalysisPanel />}
+                            {activeMode === 'camera' && <LiveCameraPanel />}
+                            {activeMode === 'compare' && <CompareVideosPanel />}
+                        </div>
 
                         {activeMode === 'video' && (
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -622,6 +772,47 @@ export default function UploadLanding() {
 
                     {/* Right Sidebar */}
                     <motion.aside initial={{ opacity: 0, x: 30 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.3 }} className="space-y-6">
+                        {/* Athlete Profile Selector */}
+                        <Card>
+                            <SectionHeader icon="👤" title="Athlete Profile" className="mb-3" />
+                            <div className="flex gap-1">
+                                {['amateur', 'semi-pro', 'pro'].map(p => (
+                                    <button key={p} onClick={() => { setAthleteProfile(p); localStorage.setItem('stridex_profile', p); }}
+                                        className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all ${athleteProfile === p ? 'bg-primary-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                                        {p === 'semi-pro' ? 'Semi-Pro' : p.charAt(0).toUpperCase() + p.slice(1)}
+                                    </button>
+                                ))}
+                            </div>
+                            <p className="text-[10px] text-gray-400 mt-2">
+                                {athleteProfile === 'pro' ? 'Strictest thresholds — professional-grade form standards.' :
+                                    athleteProfile === 'semi-pro' ? 'Balanced thresholds — competitive athlete standards.' :
+                                        'Relaxed thresholds — forgiving standards for recreational athletes.'}
+                            </p>
+                        </Card>
+
+                        {/* Session History */}
+                        <Card>
+                            <button onClick={() => setShowHistory(!showHistory)} className="flex items-center justify-between w-full">
+                                <SectionHeader icon="📋" title="Recent Sessions" />
+                                <span className="text-gray-400 text-xs">{showHistory ? '▲' : '▼'}</span>
+                            </button>
+                            {showHistory && (
+                                <div className="mt-3 space-y-2">
+                                    {recentSessions.length === 0 ? (
+                                        <p className="text-xs text-gray-400 italic">No sessions yet. Analyze a video to create your first session.</p>
+                                    ) : recentSessions.map((s, i) => (
+                                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-2">
+                                            <div>
+                                                <p className="font-semibold text-gray-700 truncate max-w-[140px]">{s.fileName || 'Session'}</p>
+                                                <p className="text-gray-400">{new Date(s.date).toLocaleDateString()}</p>
+                                            </div>
+                                            <span className={`font-bold ${s.score >= 70 ? 'text-emerald' : s.score >= 40 ? 'text-amber-dark' : 'text-danger'}`}>{s.score}/100</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </Card>
+
                         <Card>
                             <SectionHeader icon="📊" title="Risk Levels" className="mb-4 pb-3 border-b border-surface-border" />
                             <div className="space-y-3">

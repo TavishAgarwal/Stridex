@@ -18,7 +18,7 @@ export default function SignupPage() {
     const navigate = useNavigate();
 
     useEffect(() => {
-        if (isLoggedIn) navigate('/dashboard', { replace: true });
+        if (isLoggedIn) navigate('/app', { replace: true });
     }, [isLoggedIn, navigate]);
 
     // Initialize Google Sign-In
@@ -48,7 +48,7 @@ export default function SignupPage() {
         try {
             const payload = JSON.parse(atob(response.credential.split('.')[1]));
             loginWithGoogle({ email: payload.email, name: payload.name, picture: payload.picture });
-            navigate('/dashboard');
+            navigate('/app');
         } catch {
             setError('Google sign-up failed. Please try again.');
         }
@@ -62,7 +62,7 @@ export default function SignupPage() {
         if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
         try {
             signup(email, password, name);
-            navigate('/dashboard');
+            navigate('/app');
         } catch (err) {
             setError(err.message);
         }

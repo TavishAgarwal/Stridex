@@ -159,8 +159,7 @@ function EnhancedLiveCamera() {
 
       const response = await axios.post(
         `${BACKEND_URL}/analyze-frame`,
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        formData
       );
 
       if (backendOffline) setBackendOffline(false);

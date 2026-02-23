@@ -17,8 +17,14 @@ export default function useVideoAnalysis() {
             const formData = new FormData();
             formData.append('file', file);
 
+            console.log('--- UPLOAD DEBUG ---');
+            console.log('File type:', file.type);
+            console.log('File size:', file.size);
+            console.log('File name:', file.name);
+            console.log('FormData has file:', formData.has('file'));
+            console.log('FormData raw entries:', Array.from(formData.entries()));
+
             const response = await axios.post(`${BACKEND_URL}/analyze-video-enhanced`, formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
                 onUploadProgress: (e) => {
                     if (e.total) setProgress(Math.round((e.loaded / e.total) * 100));
                 },

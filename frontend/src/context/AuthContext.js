@@ -66,10 +66,17 @@ export function AuthProvider({ children }) {
     const logout = useCallback(() => {
         setUser(null);
         localStorage.removeItem('stridex_user');
+        sessionStorage.removeItem('stridex_sessions'); // clear guest history
+    }, []);
+
+    const loginAsGuest = useCallback(() => {
+        const guest = { email: 'guest@stridex.ai', name: 'Guest', role: 'athlete', isGuest: true };
+        setUser(guest);
+        // Guest sessions are NOT stored to localStorage — they are lost on reload
     }, []);
 
     return (
-        <AuthContext.Provider value={{ user, isLoggedIn: !!user, login, signup, loginWithGoogle, logout }}>
+        <AuthContext.Provider value={{ user, isLoggedIn: !!user, isGuest: !!user?.isGuest, login, signup, loginWithGoogle, loginAsGuest, logout }}>
             {children}
         </AuthContext.Provider>
     );
