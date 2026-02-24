@@ -12,12 +12,14 @@ export default function LoginPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
-    const { login, loginWithGoogle, loginAsGuest, isLoggedIn } = useAuth();
+    const [loading, setLoading] = useState(false);
+    const { login, loginWithGoogle, loginAsGuest, isLoggedIn, isCoach } = useAuth();
     const navigate = useNavigate();
 
+    // After JWT restore, redirect based on role
     useEffect(() => {
-        if (isLoggedIn) navigate('/app', { replace: true });
-    }, [isLoggedIn, navigate]);
+        if (isLoggedIn) navigate(isCoach ? '/coach' : '/app', { replace: true });
+    }, [isLoggedIn, isCoach, navigate]);
 
     // Initialize Google Sign-In
     useEffect(() => {
@@ -52,28 +54,31 @@ export default function LoginPage() {
         }
     };
 
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
         setError('');
         if (!email || !password) { setError('Please fill in all fields.'); return; }
+        setLoading(true);
         try {
-            login(email, password);
-            navigate('/app');
+            const user = await login(email, password);
+            navigate(user.role === 'coach' ? '/coach' : '/app');
         } catch (err) {
-            setError(err.message);
+            setError(err.response?.data?.detail || err.message || 'Login failed');
+        } finally {
+            setLoading(false);
         }
     };
 
     return (
-        <div className="min-h-screen bg-surface-secondary">
+        <div className="min-h-screen bg-surface-secondary dark:bg-[#050d1a] transition-colors duration-300">
             <TopNavbar />
             <div className="flex items-center justify-center py-16 px-4">
                 <div className="w-full max-w-md">
                     <Card className="space-y-6">
                         <div className="text-center space-y-2">
                             <span className="text-4xl">📈</span>
-                            <h1 className="text-2xl font-extrabold text-gray-900">{BRAND.name}</h1>
-                            <p className="text-sm text-gray-500">Sign in to your account</p>
+                            <h1 className="text-2xl font-extrabold text-gray-900 dark:text-gray-100">{BRAND.name}</h1>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">Sign in to your account</p>
                         </div>
 
                         {error && (
@@ -88,9 +93,9 @@ export default function LoginPage() {
                         </div>
 
                         <div className="flex items-center gap-3">
-                            <div className="flex-1 h-px bg-surface-border" />
+                            <div className="flex-1 h-px bg-surface-border dark:bg-slate-700" />
                             <span className="text-xs text-gray-400 font-medium">OR</span>
-                            <div className="flex-1 h-px bg-surface-border" />
+                            <div className="flex-1 h-px bg-surface-border dark:bg-slate-700" />
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-4">
@@ -100,7 +105,7 @@ export default function LoginPage() {
                                     type="email"
                                     value={email}
                                     onChange={(e) => setEmail(e.target.value)}
-                                    className="w-full px-4 py-3 rounded-xl border border-surface-border bg-white text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 transition-all"
+                                    className="w-full px-4 py-3 rounded-xl border border-surface-border dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500"
                                     placeholder="you@example.com"
                                 />
                             </div>
@@ -110,7 +115,7 @@ export default function LoginPage() {
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full px-4 py-3 rounded-xl border border-surface-border bg-white text-sm text-gray-900 outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 transition-all"
+                                    className="w-full px-4 py-3 rounded-xl border border-surface-border dark:border-slate-600 bg-white dark:bg-slate-700 text-sm text-gray-900 dark:text-gray-100 outline-none focus:ring-2 focus:ring-primary-400 focus:border-primary-400 transition-all placeholder:text-gray-400 dark:placeholder:text-gray-500"
                                     placeholder="••••••••"
                                 />
                             </div>
@@ -120,7 +125,7 @@ export default function LoginPage() {
                         </form>
 
                         <div className="text-center space-y-4">
-                            <p className="text-sm text-gray-500">
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
                                 Don't have an account?{' '}
                                 <Link to="/signup" className="font-semibold text-primary-600 hover:text-primary-700 no-underline">
                                     Sign up
@@ -132,7 +137,7 @@ export default function LoginPage() {
                                     loginAsGuest();
                                     navigate('/app');
                                 }}
-                                className="text-sm font-medium text-gray-400 hover:text-gray-600 transition-colors"
+                                className="text-sm font-medium text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                             >
                                 Continue as Guest
                             </button>
@@ -140,7 +145,7 @@ export default function LoginPage() {
                     </Card>
                 </div>
             </div>
-            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border">
+            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border dark:border-slate-700">
                 {BRAND.copyright}
             </footer>
         </div>

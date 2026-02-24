@@ -25,7 +25,7 @@ function BiomechanicsCard({ icon, title, tooltip, statusLabel, statusVariant, gl
             <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                     <span className="text-lg">{icon}</span>
-                    <h4 className="text-base font-bold text-gray-900">{title}</h4>
+                    <h4 className="text-base font-bold text-gray-900 dark:text-white">{title}</h4>
                     {tooltip && (
                         <span className="text-gray-300 cursor-help text-sm" title={tooltip}>ⓘ</span>
                     )}
@@ -177,12 +177,12 @@ export default function AnalysisDashboard() {
     /* ---------- empty state ---------- */
     if (!analysisData) {
         return (
-            <div className="min-h-screen bg-surface-secondary flex flex-col">
+            <div className="min-h-screen bg-surface-secondary dark:bg-[#0f172a] flex flex-col">
                 <TopNavbar />
                 <div className="flex flex-1 overflow-hidden">
                     <Sidebar />
                     <main className="flex-1 overflow-y-auto p-6 lg:p-10 flex flex-col items-center justify-center space-y-4">
-                        <p className="text-lg text-gray-500">No analysis data available.</p>
+                        <p className="text-lg text-gray-500 dark:text-slate-400">No analysis data available.</p>
                         <Button variant="primary" onClick={() => navigate('/')}>Upload a Video</Button>
                     </main>
                 </div>
@@ -374,7 +374,7 @@ export default function AnalysisDashboard() {
     /* ──────────────── render ────────────────── */
     return (
         <>
-            <div className="min-h-screen bg-surface-secondary flex flex-col">
+            <div className="min-h-screen bg-surface-secondary dark:bg-[#0f172a] flex flex-col">
                 <TopNavbar />
                 <div className="flex flex-1 overflow-hidden">
                     <Sidebar />
@@ -385,7 +385,7 @@ export default function AnalysisDashboard() {
                                 className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                 <div>
                                     <div className="flex items-center gap-3">
-                                        <h1 className="text-2xl font-extrabold text-gray-900">{fileName.replace(/\.[^.]+$/, '')} Analysis</h1>
+                                        <h1 className="text-2xl font-extrabold text-gray-900 dark:text-white">{fileName.replace(/\.[^.]+$/, '')} Analysis</h1>
                                         <StatusBadge label={riskCategory} variant={riskVariant(100 - overallScore)} />
                                     </div>
                                     <p className="text-sm text-gray-500 mt-1">
@@ -422,7 +422,7 @@ export default function AnalysisDashboard() {
                                             <div key={key} className="space-y-2">
                                                 <div className="flex items-center justify-between text-xs">
                                                     <span className="font-semibold text-gray-600 capitalize">{key.replace(/_/g, ' ')}</span>
-                                                    <span className="font-bold text-gray-900">{comp.score}/{comp.max}</span>
+                                                    <span className="font-bold text-gray-900 dark:text-white">{comp.score}/{comp.max}</span>
                                                 </div>
                                                 <ProgressBar value={comp.score} max={comp.max}
                                                     color={comp.score / comp.max >= 0.7 ? 'emerald' : comp.score / comp.max >= 0.4 ? 'amber' : 'red'} />
@@ -440,7 +440,7 @@ export default function AnalysisDashboard() {
                                     <div className="grid grid-cols-3 gap-4 text-center">
                                         <div>
                                             <p className="text-xs text-gray-400 uppercase font-semibold">Average Risk</p>
-                                            <p className="text-3xl font-extrabold text-gray-900">{avgRisk}%</p>
+                                            <p className="text-3xl font-extrabold text-gray-900 dark:text-white">{avgRisk}%</p>
                                         </div>
                                         <div>
                                             <p className="text-xs text-gray-400 uppercase font-semibold">Peak Risk</p>
@@ -495,10 +495,10 @@ export default function AnalysisDashboard() {
                                                                 <stop offset="95%" stopColor="#10b981" stopOpacity={0.1} />
                                                             </linearGradient>
                                                         </defs>
-                                                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
                                                         <XAxis dataKey="timestamp" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v) => `${v}s`} />
                                                         <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={[0, 100]} />
-                                                        <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}
+                                                        <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid rgba(148,163,184,0.25)', background: '#1e293b', color: '#f1f5f9', boxShadow: '0 4px 20px rgba(0,0,0,0.4)' }}
                                                             formatter={(v) => [`${v}%`, 'Risk Score']} labelFormatter={(v) => `Time: ${v}s`} />
                                                         <Area type="monotone" dataKey="risk_score" stroke="#ef4444" fill="url(#riskGrad)" strokeWidth={2} />
                                                         {/* Timeline event markers (spikes + best) */}
@@ -516,7 +516,7 @@ export default function AnalysisDashboard() {
                                                     {timelineEvents.map((evt, i) => (
                                                         <div key={i} className={`flex items-start gap-2 text-xs ${evt.type === 'spike' ? 'text-danger' : 'text-emerald-dark'}`}>
                                                             <span className="font-bold whitespace-nowrap">{evt.label}</span>
-                                                            <span className="text-gray-500">{evt.explanation}</span>
+                                                            <span className="text-gray-500 dark:text-slate-400">{evt.explanation}</span>
                                                         </div>
                                                     ))}
                                                 </div>
@@ -560,18 +560,18 @@ export default function AnalysisDashboard() {
                                                                         }`}>{rec.priority}</span>
                                                                 )}
                                                                 <span className="text-base">{rec.icon}</span>
-                                                                <h4 className="text-sm font-bold text-gray-900">{rec.area}</h4>
+                                                                <h4 className="text-sm font-bold text-gray-900 dark:text-white">{rec.area}</h4>
                                                             </div>
                                                             <StatusBadge label={rec.severity} variant={SEVERITY_MAP[rec.severity] || 'neutral'} />
                                                         </div>
-                                                        <p className="text-xs text-gray-700 leading-relaxed"><strong>Finding:</strong> {rec.finding}</p>
-                                                        <p className="text-xs text-gray-700 leading-relaxed"><strong>What to do:</strong> {rec.what_to_do}</p>
+                                                        <p className="text-xs text-gray-700 dark:text-slate-300 leading-relaxed"><strong>Finding:</strong> {rec.finding}</p>
+                                                        <p className="text-xs text-gray-700 dark:text-slate-300 leading-relaxed"><strong>What to do:</strong> {rec.what_to_do}</p>
                                                         {rec.exercises?.length > 0 && (
                                                             <div className="mt-1">
                                                                 <p className="text-[10px] font-bold uppercase text-gray-400 mb-1">Exercises</p>
                                                                 <div className="flex flex-wrap gap-1.5">
                                                                     {rec.exercises.map((ex, j) => (
-                                                                        <span key={j} className="text-[10px] bg-white border border-surface-border rounded-lg px-2 py-1 text-gray-600">
+                                                                        <span key={j} className="text-[10px] bg-white dark:bg-slate-700 border border-surface-border dark:border-slate-600 rounded-lg px-2 py-1 text-gray-600 dark:text-slate-200">
                                                                             {ex}
                                                                         </span>
                                                                     ))}
@@ -592,13 +592,13 @@ export default function AnalysisDashboard() {
                                                 {riskFactors.map((rf, i) => (
                                                     <div key={i} className="flex items-center justify-between">
                                                         <div className="flex items-center gap-2 flex-1">
-                                                            <span className="text-sm font-semibold text-gray-700">{rf.factor}</span>
+                                                            <span className="text-sm font-semibold text-gray-700 dark:text-slate-200">{rf.factor}</span>
                                                             <span className="text-[10px] text-gray-400">({rf.occurrences} frames)</span>
                                                         </div>
                                                         <div className="flex items-center gap-3 w-1/2">
                                                             <ProgressBar value={rf.frequency_pct} max={100}
                                                                 color={rf.frequency_pct > 60 ? 'red' : rf.frequency_pct > 30 ? 'amber' : 'blue'} />
-                                                            <span className="text-xs font-bold text-gray-900 w-12 text-right">{rf.frequency_pct}%</span>
+                                                            <span className="text-xs font-bold text-gray-900 dark:text-white w-12 text-right">{rf.frequency_pct}%</span>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -812,13 +812,13 @@ export default function AnalysisDashboard() {
                                                             <div className="grid grid-cols-2 gap-4">
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Left Avg</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.left_knee?.avg_angle ?? '-'}°</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.left_knee?.avg_angle ?? '-'}°</p>
                                                                     <p className="text-[10px] text-gray-400">Range: {data.left_knee?.min_angle}° – {data.left_knee?.max_angle}°</p>
                                                                     <p className="text-[10px] text-gray-400 capitalize">{data.left_knee?.trend}</p>
                                                                 </div>
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Right Avg</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.right_knee?.avg_angle ?? '-'}°</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.right_knee?.avg_angle ?? '-'}°</p>
                                                                     <p className="text-[10px] text-gray-400">Range: {data.right_knee?.min_angle}° – {data.right_knee?.max_angle}°</p>
                                                                     <p className="text-[10px] text-gray-400 capitalize">{data.right_knee?.trend}</p>
                                                                 </div>
@@ -835,11 +835,11 @@ export default function AnalysisDashboard() {
                                                             <div className="grid grid-cols-3 gap-3">
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Avg</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.avg_asymmetry ?? '-'}%</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.avg_asymmetry ?? '-'}%</p>
                                                                 </div>
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Max</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.max_asymmetry ?? '-'}%</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.max_asymmetry ?? '-'}%</p>
                                                                 </div>
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">{'> 10%'}</p>
@@ -857,11 +857,11 @@ export default function AnalysisDashboard() {
                                                             <div className="grid grid-cols-3 gap-3">
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Avg</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.avg_score ?? '-'}</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.avg_score ?? '-'}</p>
                                                                 </div>
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Min</p>
-                                                                    <p className="text-2xl font-bold text-gray-900">{data.min_score ?? '-'}</p>
+                                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.min_score ?? '-'}</p>
                                                                 </div>
                                                                 <div>
                                                                     <p className="text-xs text-gray-400 uppercase font-semibold">At Risk</p>
@@ -877,7 +877,7 @@ export default function AnalysisDashboard() {
                                                     {type === 'shoulder' && (
                                                         <div>
                                                             <p className="text-xs text-gray-400 uppercase font-semibold">Avg Asymmetry</p>
-                                                            <p className="text-2xl font-bold text-gray-900">{data.avg_asymmetry ?? '-'}%</p>
+                                                            <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.avg_asymmetry ?? '-'}%</p>
                                                         </div>
                                                     )}
 
@@ -886,7 +886,7 @@ export default function AnalysisDashboard() {
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div>
                                                                 <p className="text-xs text-gray-400 uppercase font-semibold">Avg Angle</p>
-                                                                <p className="text-2xl font-bold text-gray-900">{data.avg_angle ?? '-'}°</p>
+                                                                <p className="text-2xl font-bold text-gray-900 dark:text-white">{data.avg_angle ?? '-'}°</p>
                                                             </div>
                                                             <div>
                                                                 <p className="text-xs text-gray-400 uppercase font-semibold">At Risk</p>
@@ -923,11 +923,11 @@ export default function AnalysisDashboard() {
                                             <div className="grid grid-cols-3 gap-3">
                                                 <div>
                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Start</p>
-                                                    <p className="text-2xl font-bold text-gray-900">{fatigue.start_risk ?? '-'}%</p>
+                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{fatigue.start_risk ?? '-'}%</p>
                                                 </div>
                                                 <div>
                                                     <p className="text-xs text-gray-400 uppercase font-semibold">End</p>
-                                                    <p className="text-2xl font-bold text-gray-900">{fatigue.end_risk ?? '-'}%</p>
+                                                    <p className="text-2xl font-bold text-gray-900 dark:text-white">{fatigue.end_risk ?? '-'}%</p>
                                                 </div>
                                                 <div>
                                                     <p className="text-xs text-gray-400 uppercase font-semibold">Delta</p>

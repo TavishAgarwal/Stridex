@@ -1,7 +1,10 @@
 import asyncio
 import logging
 import threading
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
+from dotenv import load_dotenv
+load_dotenv(override=True)  # always read .env, override any stale shell env vars
+
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 import cv2
@@ -34,6 +37,24 @@ app = FastAPI()
 SESSION_HISTORY_FILE = "session_history.json"
 session_lock = threading.Lock()
 
+# ─── MongoDB Setup (optional — falls back to JSON if not configured) ──────────
+mongo_client = None
+mongo_db = None
+MONGO_URI = os.getenv("MONGODB_URI", "")
+if MONGO_URI:
+    try:
+        from pymongo import MongoClient
+        from pymongo.errors import ConnectionFailure
+        mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=3000)
+        mongo_client.admin.command("ping")
+        mongo_db = mongo_client["stridex"]
+        logger.info("✅ MongoDB connected — athlete sessions will be persisted to cloud")
+    except Exception as e:
+        logger.warning(f"⚠️  MongoDB not available ({e}) — falling back to JSON file")
+        mongo_client = None
+        mongo_db = None
+
+
 # CORS configuration
 allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")
 app.add_middleware(
@@ -43,6 +64,305 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Auth module ──────────────────────────────────────────────────────────────
+from auth import (
+    hash_password, verify_password, create_token,
+    get_current_user, require_athlete, require_coach,
+)
+
+# ─── Clearance config (env-driven, no hardcoding) ─────────────────────────────
+CLEARANCE_CONFIG = {
+    "max_avg_risk_for_clearance":      int(os.getenv("MAX_AVG_RISK_CLEARANCE", "40")),
+    "max_high_risk_pct_for_clearance": float(os.getenv("MAX_HIGH_RISK_PCT_CLEARANCE", "0.10")),
+}
+
+# ─── MongoDB index creation on startup ────────────────────────────────────────
+def create_mongo_indexes():
+    if mongo_db is None:
+        return
+    try:
+        from pymongo import ASCENDING, DESCENDING
+        mongo_db["users"].create_index("email", unique=True)
+        mongo_db["sessions_v2"].create_index([("athlete_id", ASCENDING), ("session_date", DESCENDING)])
+        mongo_db["sessions_v2"].create_index("coach_id")
+        mongo_db["coach_athlete_assignments"].create_index(
+            [("coach_id", ASCENDING), ("athlete_id", ASCENDING)], unique=True
+        )
+        mongo_db["coach_notes"].create_index("session_id")
+        logger.info("✅ MongoDB indexes ready")
+    except Exception as e:
+        logger.warning(f"MongoDB index creation warning: {e}")
+
+create_mongo_indexes()
+
+# ─── Pydantic models — Coach Platform ────────────────────────────────────────
+from pydantic import EmailStr
+
+class UserSignup(BaseModel):
+    name: str
+    email: str
+    password: str
+    role: str = "athlete"  # "athlete" | "coach"
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class SessionV2Request(BaseModel):
+    athlete_id: str
+    coach_id: Optional[str] = None
+    avg_risk: float
+    peak_risk: float = 0.0
+    time_in_low: float = 0.0
+    time_in_moderate: float = 0.0
+    time_in_high: float = 0.0
+    most_unstable_joint: Optional[str] = None
+    system_flags: Optional[List[str]] = []
+    risk_time_series: Optional[List[float]] = []
+    duration_seconds: int = 0
+    sport_mode: str = "default"
+    performance_score: float = 0.0
+    rep_count: int = 0
+
+class AssignAthleteRequest(BaseModel):
+    athlete_email: str
+
+class CoachNoteRequest(BaseModel):
+    session_id: str
+    note_text: str
+
+# ─── Auth Routes ─────────────────────────────────────────────────────────────
+
+@app.post("/auth/signup")
+def auth_signup(body: UserSignup):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database not available — MongoDB required for backend auth")
+    if body.role not in ("athlete", "coach"):
+        raise HTTPException(status_code=400, detail="role must be 'athlete' or 'coach'")
+    users_col = mongo_db["users"]
+    if users_col.find_one({"email": body.email.lower()}):
+        raise HTTPException(status_code=409, detail="An account with this email already exists")
+    doc = {
+        "name": body.name,
+        "email": body.email.lower(),
+        "password_hash": hash_password(body.password),
+        "role": body.role,
+        "created_at": time.time(),
+    }
+    result = users_col.insert_one(doc)
+    user_id = str(result.inserted_id)
+    token = create_token(user_id, body.role, body.email.lower(), body.name)
+    return {"token": token, "user": {"id": user_id, "name": body.name, "email": body.email.lower(), "role": body.role}}
+
+@app.post("/auth/login")
+def auth_login(body: UserLogin):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="Database not available")
+    users_col = mongo_db["users"]
+    user = users_col.find_one({"email": body.email.lower()})
+    if not user or not verify_password(body.password, user["password_hash"]):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    user_id = str(user["_id"])
+    token = create_token(user_id, user["role"], user["email"], user["name"])
+    return {"token": token, "user": {"id": user_id, "name": user["name"], "email": user["email"], "role": user["role"]}}
+
+@app.get("/auth/me")
+def auth_me(current_user: dict = Depends(require_athlete)):
+    return current_user
+
+# ─── Sessions V2 Routes ───────────────────────────────────────────────────────
+
+@app.post("/sessions")
+def save_session_v2(req: SessionV2Request, current_user: dict = Depends(require_athlete)):
+    cleared = (
+        req.avg_risk <= CLEARANCE_CONFIG["max_avg_risk_for_clearance"] and
+        (req.time_in_high / max(req.duration_seconds, 1)) <= CLEARANCE_CONFIG["max_high_risk_pct_for_clearance"]
+    )
+    doc = req.dict()
+    doc["cleared_to_play"] = cleared
+    doc["session_type"] = "live"
+    doc["created_at"] = time.time()
+    doc["session_date"] = time.time()
+
+    if mongo_db is not None:
+        try:
+            result = mongo_db["sessions_v2"].insert_one(doc)
+            doc.pop("_id", None)
+            return {"success": True, "session_id": str(result.inserted_id), "cleared_to_play": cleared}
+        except Exception as e:
+            logger.error(f"sessions_v2 insert failed: {e}")
+
+    # JSON fallback
+    with session_lock:
+        history = []
+        if os.path.exists(SESSION_HISTORY_FILE):
+            with open(SESSION_HISTORY_FILE) as f:
+                try: history = json.load(f)
+                except: pass
+        doc["session_id"] = f"session_{int(time.time())}"
+        history.append(doc)
+        with open(SESSION_HISTORY_FILE, "w") as f:
+            json.dump(history, f)
+    return {"success": True, "session_id": doc["session_id"], "cleared_to_play": cleared}
+
+@app.get("/sessions/{athlete_id}")
+def get_sessions_for_athlete(athlete_id: str, page: int = 1, limit: int = 20, current_user: dict = Depends(require_athlete)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    skip = (page - 1) * limit
+    cursor = (
+        mongo_db["sessions_v2"]
+        .find({"athlete_id": athlete_id}, {"_id": 0})
+        .sort("session_date", -1)
+        .skip(skip).limit(limit)
+    )
+    return {"sessions": list(cursor), "page": page, "limit": limit}
+
+@app.get("/sessions/detail/{session_id}")
+def get_session_detail(session_id: str, current_user: dict = Depends(require_athlete)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    from bson import ObjectId
+    try:
+        doc = mongo_db["sessions_v2"].find_one({"_id": ObjectId(session_id)})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Session not found")
+        doc["_id"] = str(doc["_id"])
+        return doc
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+# ─── Coach Assignment Routes ──────────────────────────────────────────────────
+
+@app.post("/assign-athlete")
+def assign_athlete(body: AssignAthleteRequest, current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    athlete = mongo_db["users"].find_one({"email": body.athlete_email.lower(), "role": "athlete"})
+    if not athlete:
+        raise HTTPException(status_code=404, detail="No athlete account found with that email")
+    coach_id    = current_user["sub"]
+    athlete_id  = str(athlete["_id"])
+    try:
+        mongo_db["coach_athlete_assignments"].insert_one({
+            "coach_id": coach_id, "athlete_id": athlete_id, "assigned_at": time.time()
+        })
+    except Exception:
+        raise HTTPException(status_code=409, detail="Athlete already assigned to you")
+    return {"success": True, "athlete": {"id": athlete_id, "name": athlete["name"], "email": athlete["email"]}}
+
+@app.get("/coach/athletes")
+def coach_get_athletes(current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    from bson import ObjectId
+    coach_id = current_user["sub"]
+    assignments = list(mongo_db["coach_athlete_assignments"].find({"coach_id": coach_id}))
+    athlete_ids = [a["athlete_id"] for a in assignments]
+    athletes = []
+    for aid in athlete_ids:
+        try:
+            user = mongo_db["users"].find_one({"_id": ObjectId(aid)}, {"password_hash": 0})
+            if not user:
+                continue
+            # Last session summary
+            last_sessions = list(
+                mongo_db["sessions_v2"].find({"athlete_id": aid}).sort("session_date", -1).limit(3)
+            )
+            last = last_sessions[0] if last_sessions else None
+            # Risk trend from last 3 sessions
+            risks = [s.get("avg_risk", 0) for s in last_sessions]
+            trend = "stable"
+            if len(risks) >= 2:
+                delta = risks[0] - risks[-1]
+                if delta < -5: trend = "improving"
+                elif delta > 5: trend = "worsening"
+            athletes.append({
+                "id": aid,
+                "name": user["name"],
+                "email": user["email"],
+                "last_session_date": last["session_date"] if last else None,
+                "avg_risk": last["avg_risk"] if last else None,
+                "cleared_to_play": last.get("cleared_to_play") if last else None,
+                "risk_trend": trend,
+                "session_count": len(last_sessions),
+            })
+        except Exception as e:
+            logger.warning(f"Error loading athlete {aid}: {e}")
+    return {"athletes": athletes}
+
+@app.get("/coach/leaderboard")
+def coach_leaderboard(current_user: dict = Depends(require_coach)):
+    """Top 5 athletes by lowest weekly avg risk (best movers)."""
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    from bson import ObjectId
+    coach_id = current_user["sub"]
+    assignments = list(mongo_db["coach_athlete_assignments"].find({"coach_id": coach_id}))
+    cutoff = time.time() - 7 * 86400
+    rows = []
+    for a in assignments:
+        aid = a["athlete_id"]
+        sessions = list(mongo_db["sessions_v2"].find({"athlete_id": aid, "session_date": {"$gte": cutoff}}))
+        if not sessions:
+            continue
+        avg = sum(s.get("avg_risk", 0) for s in sessions) / len(sessions)
+        try:
+            user = mongo_db["users"].find_one({"_id": ObjectId(aid)}, {"name": 1, "email": 1})
+            name = user["name"] if user else aid
+        except:
+            name = aid
+        rows.append({"athlete_id": aid, "name": name, "weekly_avg_risk": round(avg, 1), "session_count": len(sessions)})
+    rows.sort(key=lambda r: r["weekly_avg_risk"])
+    return {"leaderboard": rows[:5]}
+
+# ─── Coach Notes Routes ───────────────────────────────────────────────────────
+
+@app.post("/coach-notes")
+def add_coach_note(body: CoachNoteRequest, current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    now = time.time()
+    doc = {"session_id": body.session_id, "coach_id": current_user["sub"],
+           "note_text": body.note_text, "created_at": now, "updated_at": now}
+    result = mongo_db["coach_notes"].insert_one(doc)
+    return {"success": True, "note_id": str(result.inserted_id)}
+
+@app.get("/coach-notes/{session_id}")
+def get_coach_notes(session_id: str, current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    notes = list(mongo_db["coach_notes"].find({"session_id": session_id, "coach_id": current_user["sub"]}))
+    for n in notes:
+        n["_id"] = str(n["_id"])
+    return {"notes": notes}
+
+@app.put("/coach-notes/{note_id}")
+def update_coach_note(note_id: str, body: CoachNoteRequest, current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    from bson import ObjectId
+    result = mongo_db["coach_notes"].update_one(
+        {"_id": ObjectId(note_id), "coach_id": current_user["sub"]},
+        {"$set": {"note_text": body.note_text, "updated_at": time.time()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Note not found or not yours")
+    return {"success": True}
+
+@app.put("/sessions/{session_id}/clearance")
+def override_clearance(session_id: str, cleared: bool, current_user: dict = Depends(require_coach)):
+    if mongo_db is None:
+        raise HTTPException(status_code=503, detail="MongoDB required")
+    from bson import ObjectId
+    result = mongo_db["sessions_v2"].update_one(
+        {"_id": ObjectId(session_id)},
+        {"$set": {"cleared_to_play": cleared, "clearance_override_by": current_user["sub"], "clearance_override_at": time.time()}}
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"success": True, "cleared_to_play": cleared}
 
 # Initialize MediaPipe Tasks API
 from mediapipe.tasks import python
@@ -63,6 +383,21 @@ def read_root():
         "version": "2.0.0",
         "status": "running"
     }
+
+# ─── Emergency Risk Configuration ────────────────────────────────────────────
+RISK_CONFIG = {
+    "high_risk_threshold": int(os.environ.get("HIGH_RISK_THRESHOLD", "65")),
+    "sustained_duration_seconds": int(os.environ.get("SUSTAINED_DURATION_SECONDS", "7")),
+    "escalation_duration_seconds": int(os.environ.get("ESCALATION_DURATION_SECONDS", "15")),
+    "emergency_cooldown_seconds": int(os.environ.get("EMERGENCY_COOLDOWN_SECONDS", "15")),
+    "audio_alert_enabled": os.environ.get("AUDIO_ALERT_ENABLED", "true").lower() == "true",
+    "min_confidence_threshold": float(os.environ.get("MIN_CONFIDENCE_THRESHOLD", "0.35")),
+}
+
+@app.get("/risk-config")
+def get_risk_config():
+    """Return configurable emergency risk thresholds. All values are env-var driven."""
+    return RISK_CONFIG
 
 @app.post("/analyze-frame")
 async def analyze_frame(file: UploadFile = File(...), session_id: str = Form("default"), adaptive_mode: bool = Form(False), sport: str = Form("default")):
@@ -165,6 +500,202 @@ async def analyze_frame(file: UploadFile = File(...), session_id: str = Form("de
     except Exception as e:
         logger.error(f"Error in analyze_frame: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ─── Comparison Intelligence Config (configurable thresholds) ─────────────────
+DELTA_IMPROVED_THRESHOLD = float(os.environ.get("DELTA_IMPROVED_THRESHOLD", "0.05"))
+DELTA_WORSENED_THRESHOLD = float(os.environ.get("DELTA_WORSENED_THRESHOLD", "-0.05"))
+IMPROVEMENT_SCORE_STRONG = float(os.environ.get("IMPROVEMENT_SCORE_STRONG", "40"))
+IMPROVEMENT_SCORE_MODERATE = float(os.environ.get("IMPROVEMENT_SCORE_MODERATE", "15"))
+
+def _classify_delta(delta: float) -> str:
+    if delta > DELTA_IMPROVED_THRESHOLD: return "Improved"
+    if delta < DELTA_WORSENED_THRESHOLD: return "Worsened"
+    return "Neutral"
+
+async def _analyze_video_for_compare(temp_path: str) -> dict:
+    """Extract comparison metrics from a video file — reuses analysis pipeline."""
+    cap = cv2.VideoCapture(temp_path)
+    if not cap.isOpened():
+        return {}
+    fps_v = int(cap.get(cv2.CAP_PROP_FPS)) or 25
+    risk_scores, asymmetries, confidences = [], [], []
+    frame_count = 0
+    peak_frame = 0
+    peak_risk = 0.0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_count += 1
+        if frame_count % 5 != 0:
+            continue
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        res = await asyncio.to_thread(detector.detect, mp_img)
+        if res.pose_landmarks:
+            lm = res.pose_landmarks[0]
+            ra = calculate_injury_risk(lm)
+            rs = ra['risk_score']
+            risk_scores.append(rs)
+            confidences.append(ra.get('overall_confidence', 0.5))
+            # Asymmetry from stride
+            bio = ra.get('biomechanics', {})
+            sa = bio.get('stride_asymmetry', {})
+            asym_raw = sa.get('asymmetry_percent', '0%')
+            try:
+                asym_val = float(str(asym_raw).replace('%', ''))
+            except Exception:
+                asym_val = 0.0
+            asymmetries.append(asym_val)
+            # Track peak
+            if rs > peak_risk:
+                peak_risk = rs
+                peak_frame = len(risk_scores) - 1
+    cap.release()
+
+    if not risk_scores:
+        return {"avg_risk": 0, "avg_asymmetry": 0, "fatigue_score": 0, "consistency_index": 0,
+                "peak_risk_frame": 0, "peak_risk": 0, "top_joint": ""}
+
+    n = len(risk_scores)
+    avg_risk = round(sum(risk_scores) / n, 2)
+    avg_asym = round(sum(asymmetries) / n, 2)
+    # Fatigue score: risk increase from first quarter to last quarter (0–100 scale)
+    q = max(1, n // 4)
+    first_q_avg = sum(risk_scores[:q]) / q
+    last_q_avg = sum(risk_scores[-q:]) / q
+    fatigue_score = round(max(0.0, min(100.0, (last_q_avg - first_q_avg) + 50)), 2)
+    # Consistency index: 100 − normalised variance (0–100, higher = more consistent)
+    mean_r = sum(risk_scores) / n
+    variance = sum((x - mean_r) ** 2 for x in risk_scores) / n
+    consistency_index = round(max(0.0, min(100.0, 100.0 - min(variance * 0.5, 100.0))), 2)
+
+    return {
+        "avg_risk": avg_risk,
+        "avg_asymmetry": avg_asym,
+        "fatigue_score": fatigue_score,
+        "consistency_index": consistency_index,
+        "peak_risk_frame": peak_frame,
+        "peak_risk": round(peak_risk, 1),
+    }
+
+@app.post("/compare-sessions")
+async def compare_sessions(
+    video_a: UploadFile = File(...),
+    video_b: UploadFile = File(...),
+):
+    """Biomechanical comparison of two videos — returns deltas, improvement score, quadrant, AI insights."""
+    import tempfile as _tmpmod
+
+    paths = []
+    try:
+        for uf in [video_a, video_b]:
+            with _tmpmod.NamedTemporaryFile(delete=False, suffix='.mp4') as tf:
+                tf.write(await uf.read())
+                paths.append(tf.name)
+
+        # Analyze both videos concurrently
+        m_a, m_b = await asyncio.gather(
+            _analyze_video_for_compare(paths[0]),
+            _analyze_video_for_compare(paths[1]),
+        )
+
+        if not m_a or not m_b:
+            raise HTTPException(status_code=422, detail="Pose not detected in one or both videos.")
+
+        # ── Deltas (positive = B improved over A) ─────────────────────────────
+        def safe_delta(a, b, invert=False):
+            if a == 0: return 0.0
+            d = (a - b) / a  # positive = B reduced it (improvement for risk/asym/fatigue)
+            return round(-d if invert else d, 4)
+
+        risk_delta        = safe_delta(m_a["avg_risk"], m_b["avg_risk"])
+        asym_delta        = safe_delta(m_a["avg_asymmetry"], m_b["avg_asymmetry"])
+        fatigue_delta_raw = m_a["fatigue_score"] - m_b["fatigue_score"]   # positive = B less fatigued
+        fatigue_delta     = round(fatigue_delta_raw / max(m_a["fatigue_score"], 1), 4)
+        # Consistency: higher is better → delta positive when B > A
+        consistency_delta = safe_delta(m_b["consistency_index"], m_a["consistency_index"], invert=True)
+
+        deltas = {
+            "risk":         {"value": risk_delta,        "label": _classify_delta(risk_delta)},
+            "asymmetry":    {"value": asym_delta,        "label": _classify_delta(asym_delta)},
+            "fatigue":      {"value": fatigue_delta,     "label": _classify_delta(fatigue_delta)},
+            "consistency":  {"value": consistency_delta, "label": _classify_delta(consistency_delta)},
+        }
+
+        # ── Biomechanical Improvement Score ────────────────────────────────────
+        R = risk_delta
+        A = asym_delta
+        F = -fatigue_delta   # lower fatigue = better for B
+        C = consistency_delta
+        score_raw = (0.4 * R) + (0.3 * A) + (0.2 * C) + (0.1 * F)
+        improvement_score = int(max(0, min(100, round(score_raw * 100))))
+
+        # ── Performance-Risk Quadrant ──────────────────────────────────────────
+        def perf_risk_coords(metrics):
+            performance = round(1.0 - min(metrics["avg_asymmetry"] / 100.0, 1.0), 3)
+            risk        = round(metrics["avg_risk"] / 100.0, 3)
+            return {"performance": performance, "risk": risk}
+
+        performance_risk = {"A": perf_risk_coords(m_a), "B": perf_risk_coords(m_b)}
+
+        # ── AI Comparative Insights (rule-based) ──────────────────────────────
+        positives, concerns = [], []
+        if risk_delta > 0.15:
+            positives.append("Significant overall risk reduction observed in Video B.")
+        elif risk_delta > 0.05:
+            positives.append("Moderate risk reduction detected in Video B.")
+        elif risk_delta < -0.05:
+            concerns.append("Risk score increased in Video B — form may have deteriorated.")
+
+        if asym_delta > 0.1:
+            positives.append("Improved movement symmetry detected — better bilateral balance.")
+        elif asym_delta < -0.1:
+            concerns.append("Asymmetry increased in Video B — watch for compensation patterns.")
+
+        if fatigue_delta_raw > 5:
+            positives.append("Fatigue accumulation is lower in Video B — better endurance.")
+        elif fatigue_delta_raw < -5:
+            concerns.append("Fatigue accumulation increased in Video B — recovery may be insufficient.")
+
+        if consistency_delta > 0.1:
+            positives.append("Movement consistency improved — more stable form throughout.")
+        elif consistency_delta < -0.1:
+            concerns.append("Form consistency declined — technique breaks down over the session.")
+
+        if improvement_score > IMPROVEMENT_SCORE_STRONG:
+            headline = "Strong Biomechanical Improvement"
+            recommendation = "Maintain this training trajectory. Video B demonstrates genuine skill progression. Continue progressive overload with form monitoring."
+        elif improvement_score > IMPROVEMENT_SCORE_MODERATE:
+            headline = "Moderate Improvement"
+            recommendation = "Progress is visible but minor asymmetries remain. Focus on the flagged concern areas with targeted corrective exercises before increasing training volume."
+        else:
+            headline = "Minimal Change Detected"
+            recommendation = "Key biomechanical patterns remain unchanged between sessions. Consider technique-focused coaching, mobility work, and controlled movement drills before next assessment."
+
+        insights = {
+            "headline": headline,
+            "positives": positives if positives else ["No major improvements detected between sessions."],
+            "concerns": concerns if concerns else ["No significant concerns detected."],
+            "recommendation": recommendation,
+        }
+
+        logger.info(f"Comparison complete: improvement_score={improvement_score}, risk_delta={risk_delta:.3f}")
+
+        return {
+            "video_A": m_a,
+            "video_B": m_b,
+            "deltas": deltas,
+            "improvement_score": improvement_score,
+            "performance_risk": performance_risk,
+            "insights": insights,
+        }
+
+    finally:
+        for p in paths:
+            try: os.unlink(p)
+            except Exception: pass
 
 @app.post("/analyze-video-enhanced")
 async def analyze_video_enhanced(file: UploadFile = File(...)):
@@ -1016,6 +1547,109 @@ def get_history():
                 except (json.JSONDecodeError, ValueError):
                     pass
     return history
+
+@app.delete("/delete-session")
+def delete_session(session_id: str, timestamp: Optional[float] = None):
+    """Delete a session from session_history.json by session_id (and optional timestamp for disambiguation)."""
+    with session_lock:
+        history = []
+        if os.path.exists(SESSION_HISTORY_FILE):
+            with open(SESSION_HISTORY_FILE, "r") as f:
+                try:
+                    history = json.load(f)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        original_len = len(history)
+        if timestamp is not None:
+            # Remove the specific entry by both session_id and timestamp
+            history = [s for s in history if not (s.get("session_id") == session_id and abs((s.get("timestamp") or 0) - timestamp) < 1)]
+        else:
+            # Remove first match by session_id only
+            removed = False
+            new_history = []
+            for s in history:
+                if not removed and s.get("session_id") == session_id:
+                    removed = True
+                else:
+                    new_history.append(s)
+            history = new_history
+        with open(SESSION_HISTORY_FILE, "w") as f:
+            json.dump(history, f)
+    return {"success": True, "removed": original_len - len(history)}
+
+
+class AthleteSessionRequest(BaseModel):
+    user_id: str
+    user_name: Optional[str] = "Athlete"
+    avg_risk: float
+    max_risk: float
+    peak_risk_timestamp: Optional[str] = None
+    most_unstable_joint: Optional[str] = None
+    avg_fatigue: float
+    max_fatigue: float
+    performance_score: float
+    rep_count: int
+    session_duration_s: int
+    sport_mode: str = "default"
+    trend_direction: Optional[str] = "stable"
+    injury_probability: Optional[float] = 0.0
+    coaching_recommendations: Optional[List[str]] = []
+    risk_factors: Optional[List[dict]] = []
+    timestamp: Optional[float] = None
+
+@app.post("/athlete-sessions")
+async def save_athlete_session(req: AthleteSessionRequest):
+    """Save a live session to the athlete's MongoDB profile (or JSON fallback)."""
+    doc = req.dict()
+    doc["timestamp"] = doc.get("timestamp") or time.time()
+
+    if mongo_db is not None:
+        try:
+            mongo_db["athlete_sessions"].insert_one(doc)
+            doc.pop("_id", None)
+            return {"success": True, "storage": "mongodb", "message": "Session saved to your profile"}
+        except Exception as e:
+            logger.error(f"MongoDB write failed: {e}")
+
+    # Fallback: append to JSON file
+    with session_lock:
+        history = []
+        if os.path.exists(SESSION_HISTORY_FILE):
+            with open(SESSION_HISTORY_FILE, "r") as f:
+                try:
+                    history = json.load(f)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        history.append(doc)
+        with open(SESSION_HISTORY_FILE, "w") as f:
+            json.dump(history, f)
+
+    return {"success": True, "storage": "local_json", "message": "Session saved locally (MongoDB not configured)"}
+
+@app.get("/athlete-sessions/{user_id}")
+async def get_athlete_sessions(user_id: str, limit: int = 50):
+    """Fetch all sessions for a given athlete (newest first)."""
+    if mongo_db is not None:
+        try:
+            cursor = mongo_db["athlete_sessions"].find(
+                {"user_id": user_id},
+                {"_id": 0}
+            ).sort("timestamp", -1).limit(limit)
+            return list(cursor)
+        except Exception as e:
+            logger.error(f"MongoDB read failed: {e}")
+
+    # Fallback: return JSON file filtered by user_id
+    with session_lock:
+        history = []
+        if os.path.exists(SESSION_HISTORY_FILE):
+            with open(SESSION_HISTORY_FILE, "r") as f:
+                try:
+                    history = json.load(f)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+    filtered = [s for s in history if s.get("user_id") == user_id]
+    return list(reversed(filtered))[-limit:]
 
 # ─── AI Chat Endpoint ───────────────────────────────────────────────────────
 

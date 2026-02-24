@@ -15,7 +15,7 @@ export default function Card({ children, className, glowColor, noPadding, onClic
         <div
             onClick={onClick}
             className={clsx(
-                'bg-white rounded-2xl shadow-glass border border-surface-border transition-all duration-300',
+                'bg-white dark:bg-slate-800 rounded-2xl shadow-glass dark:shadow-none border border-surface-border dark:border-slate-700 transition-all duration-300',
                 glowColor && `border-l-4 ${GLOW_MAP[glowColor] || ''}`,
                 !noPadding && 'p-6',
                 onClick && 'cursor-pointer hover:shadow-glass-lg',

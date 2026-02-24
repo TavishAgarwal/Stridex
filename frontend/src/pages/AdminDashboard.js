@@ -50,7 +50,7 @@ export default function AdminDashboard() {
     const initColors = ['bg-primary-500', 'bg-emerald', 'bg-purple', 'bg-amber', 'bg-danger'];
 
     return (
-        <div className="min-h-screen bg-surface-secondary">
+        <div className="min-h-screen bg-surface-secondary dark:bg-[#0f172a]">
             <TopNavbar />
             <div className="flex">
                 <Sidebar />
@@ -59,8 +59,8 @@ export default function AdminDashboard() {
                         {/* Page Header */}
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                             <div>
-                                <h1 className="text-2xl font-extrabold text-gray-900">Dashboard Overview</h1>
-                                <p className="text-sm text-gray-500 mt-1">Welcome back, {user?.name || 'User'}. Here's your performance data.</p>
+                                <h1 className="text-2xl font-extrabold text-gray-900 dark:text-white">Dashboard Overview</h1>
+                                <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">Welcome back, {user?.name || 'User'}. Here's your performance data.</p>
                             </div>
                             <div className="flex items-center gap-3">
                                 <Button variant="primary" icon="+" size="sm" onClick={() => navigate('/')}>New Session</Button>
@@ -71,14 +71,14 @@ export default function AdminDashboard() {
 
                         {loading ? (
                             <div className="space-y-6">
-                                {[1, 2, 3].map((i) => <div key={i} className="h-32 bg-gray-100 rounded-2xl animate-pulse" />)}
+                                {[1, 2, 3].map((i) => <div key={i} className="h-32 bg-gray-100 dark:bg-slate-700 rounded-2xl animate-pulse" />)}
                             </div>
                         ) : sessions.length === 0 ? (
                             /* Empty state */
                             <Card className="text-center py-20">
                                 <span className="text-5xl">📊</span>
-                                <h3 className="text-xl font-bold text-gray-900 mt-4">No data yet</h3>
-                                <p className="text-sm text-gray-500 mt-2 max-w-md mx-auto">
+                                <h3 className="text-xl font-bold text-gray-900 dark:text-white mt-4">No data yet</h3>
+                                <p className="text-sm text-gray-500 dark:text-slate-400 mt-2 max-w-md mx-auto">
                                     Upload a video or start a live camera session to begin seeing your biomechanical analysis data here.
                                 </p>
                                 <Button variant="primary" className="mt-6" onClick={() => navigate('/')}>Start Your First Session</Button>
@@ -91,7 +91,7 @@ export default function AdminDashboard() {
                                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
                                         <Card className="text-center">
                                             <div className="flex items-center justify-between mb-2">
-                                                <h3 className="text-sm font-bold text-gray-900">Movement Score</h3>
+                                                <h3 className="text-sm font-bold text-gray-900 dark:text-white">Movement Score</h3>
                                                 <span className="text-gray-300 text-sm cursor-help" title="Average score across all sessions">ⓘ</span>
                                             </div>
                                             <CircularGauge value={avgScore} max={100} label={avgScore >= 70 ? 'GOOD' : avgScore >= 40 ? 'FAIR' : 'NEEDS WORK'} color="blue" size={140} />
@@ -103,7 +103,7 @@ export default function AdminDashboard() {
                                         <Card>
                                             <div className="flex items-center justify-between mb-4">
                                                 <div>
-                                                    <h3 className="text-sm font-bold text-gray-900">Injury Risk Trend</h3>
+                                                    <h3 className="text-sm font-bold text-gray-900 dark:text-white">Injury Risk Trend</h3>
                                                     <p className="text-xs text-gray-400">Last {chartData.length} sessions</p>
                                                 </div>
                                             </div>
@@ -111,10 +111,10 @@ export default function AdminDashboard() {
                                                 <div className="h-40">
                                                     <ResponsiveContainer width="100%" height="100%">
                                                         <BarChart data={chartData}>
-                                                            <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.15)" />
                                                             <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#94a3b8' }} />
                                                             <YAxis tick={{ fontSize: 10, fill: '#94a3b8' }} domain={[0, 100]} />
-                                                            <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 12 }} formatter={(v) => [`${v}%`, 'Risk']} />
+                                                            <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid rgba(148,163,184,0.25)', background: '#1e293b', color: '#f1f5f9', fontSize: 12 }} formatter={(v) => [`${v}%`, 'Risk']} />
                                                             <Bar dataKey="risk" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                                                         </BarChart>
                                                     </ResponsiveContainer>
@@ -139,7 +139,7 @@ export default function AdminDashboard() {
                                                 <div className="w-10 h-10 rounded-xl bg-danger/10 flex items-center justify-center text-lg">🔺</div>
                                                 <div>
                                                     <p className="text-xs font-semibold uppercase text-gray-400">ALERTS</p>
-                                                    <p className="text-xl font-extrabold text-gray-900">{highRiskCount} High Risk</p>
+                                                    <p className="text-xl font-extrabold text-gray-900 dark:text-white">{highRiskCount} High Risk</p>
                                                 </div>
                                             </div>
                                         </Card>
@@ -150,7 +150,7 @@ export default function AdminDashboard() {
                                 <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
                                     <Card>
                                         <div className="flex items-center justify-between mb-6">
-                                            <h3 className="text-lg font-bold text-gray-900">Recent Recordings</h3>
+                                            <h3 className="text-lg font-bold text-gray-900 dark:text-white">Recent Recordings</h3>
                                             <button className="text-sm font-semibold text-primary-600 hover:text-primary-700 transition-colors" onClick={() => navigate('/sessions')}>
                                                 View All
                                             </button>
@@ -158,7 +158,7 @@ export default function AdminDashboard() {
                                         <div className="overflow-x-auto">
                                             <table className="w-full">
                                                 <thead>
-                                                    <tr className="text-left text-xs font-semibold uppercase text-gray-400 tracking-wider border-b border-surface-border">
+                                                    <tr className="text-left text-xs font-semibold uppercase text-gray-400 tracking-wider border-b border-surface-border dark:border-slate-700">
                                                         <th className="py-3 pr-4">Session</th>
                                                         <th className="py-3 pr-4">Session Type</th>
                                                         <th className="py-3 pr-4">Date</th>
@@ -170,20 +170,20 @@ export default function AdminDashboard() {
                                                     {recordings.map((rec, idx) => {
                                                         const badge = getRiskBadge(rec.riskScore);
                                                         return (
-                                                            <tr key={rec.id} className="border-b border-surface-border last:border-0 hover:bg-gray-50 transition-colors">
+                                                            <tr key={rec.id} className="border-b border-surface-border dark:border-slate-700 last:border-0 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-colors">
                                                                 <td className="py-4 pr-4">
                                                                     <div className="flex items-center gap-3">
                                                                         <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold ${initColors[idx % initColors.length]}`}>
                                                                             {rec.initials}
                                                                         </div>
                                                                         <div>
-                                                                            <p className="text-sm font-semibold text-gray-900">{rec.name}</p>
+                                                                            <p className="text-sm font-semibold text-gray-900 dark:text-white">{rec.name}</p>
                                                                             <p className="text-xs text-gray-400">{rec.sport}</p>
                                                                         </div>
                                                                     </div>
                                                                 </td>
                                                                 <td className="py-4 pr-4"><StatusBadge label={rec.type} variant="info" /></td>
-                                                                <td className="py-4 pr-4 text-sm text-gray-500">{rec.date}</td>
+                                                                <td className="py-4 pr-4 text-sm text-gray-500 dark:text-slate-400">{rec.date}</td>
                                                                 <td className="py-4 pr-4"><StatusBadge label={badge.label} variant={badge.variant} /></td>
                                                                 <td className="py-4">
                                                                     <button onClick={() => navigate('/analysis')} className="text-gray-400 hover:text-primary-600 transition-colors text-lg">👁</button>
@@ -201,7 +201,7 @@ export default function AdminDashboard() {
                     </div>
                 </main>
             </div>
-            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border">{BRAND.copyright}</footer>
+            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border dark:border-slate-700">{BRAND.copyright}</footer>
         </div>
     );
 }

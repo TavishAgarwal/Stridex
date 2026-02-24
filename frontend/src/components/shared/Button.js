@@ -3,8 +3,8 @@ import clsx from 'clsx';
 
 const VARIANT_STYLES = {
     primary: 'bg-primary-600 text-white hover:bg-primary-700 shadow-md hover:shadow-lg',
-    secondary: 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50 hover:border-gray-400',
-    ghost: 'bg-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900',
+    secondary: 'bg-white dark:bg-slate-700 text-gray-700 dark:text-gray-200 border border-gray-300 dark:border-slate-600 hover:bg-gray-50 dark:hover:bg-slate-600 hover:border-gray-400 dark:hover:border-slate-500',
+    ghost: 'bg-transparent text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700 hover:text-gray-900 dark:hover:text-gray-200',
     danger: 'bg-danger text-white hover:bg-danger-dark shadow-md',
     success: 'bg-emerald text-white hover:bg-emerald-dark shadow-md',
 };

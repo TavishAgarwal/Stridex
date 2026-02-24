@@ -68,27 +68,27 @@ export default function ReportsPage() {
     };
 
     return (
-        <div className="min-h-screen bg-surface-secondary">
+        <div className="min-h-screen bg-surface-secondary dark:bg-[#050d1a] transition-colors duration-300">
             <TopNavbar />
             <div className="flex">
                 <Sidebar />
                 <main className="flex-1 overflow-auto px-8 py-8">
                     <div className="flex items-center justify-between mb-8">
                         <div>
-                            <h1 className="text-2xl font-extrabold text-gray-900">Reports</h1>
-                            <p className="text-sm text-gray-500 mt-1">Download PDF reports from your analysis sessions</p>
+                            <h1 className="text-2xl font-extrabold text-gray-900 dark:text-gray-100">Reports</h1>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Download PDF reports from your analysis sessions</p>
                         </div>
                     </div>
 
                     {loading ? (
                         <div className="space-y-4">
-                            {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-gray-100 rounded-xl animate-pulse" />)}
+                            {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-gray-100 dark:bg-slate-800 rounded-xl animate-pulse" />)}
                         </div>
                     ) : sessions.length === 0 ? (
                         <Card className="text-center py-16">
                             <span className="text-4xl">📄</span>
-                            <h3 className="text-lg font-bold text-gray-900 mt-4">No reports available</h3>
-                            <p className="text-sm text-gray-500 mt-2">Complete an analysis session to generate a report.</p>
+                            <h3 className="text-lg font-bold text-gray-900 dark:text-gray-100 mt-4">No reports available</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Complete an analysis session to generate a report.</p>
                             <Button variant="primary" className="mt-4" onClick={() => navigate('/')}>Start Analysis</Button>
                         </Card>
                     ) : (
@@ -96,17 +96,17 @@ export default function ReportsPage() {
                             {sessions.slice().reverse().map((s, i) => (
                                 <Card key={i} className="space-y-3 hover:shadow-glass-lg transition-shadow">
                                     <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-xl bg-primary-50 flex items-center justify-center text-lg">📄</div>
+                                        <div className="w-10 h-10 rounded-xl bg-primary-50 dark:bg-primary-900/30 flex items-center justify-center text-lg">📄</div>
                                         <div className="flex-1 min-w-0">
-                                            <p className="text-sm font-bold text-gray-900 truncate">{s.session_id || `Session ${sessions.length - i}`}</p>
+                                            <p className="text-sm font-bold text-gray-900 dark:text-gray-100 truncate">{s.session_id || `Session ${sessions.length - i}`}</p>
                                             <p className="text-xs text-gray-400">
                                                 {s.timestamp ? new Date(s.timestamp * 1000).toLocaleDateString() : 'Recent'}
                                             </p>
                                         </div>
                                     </div>
-                                    <div className="flex items-center justify-between text-xs text-gray-500">
-                                        <span>Risk: <strong className="text-gray-900">{s.avg_risk || 0}%</strong></span>
-                                        <span>Score: <strong className="text-gray-900">{s.performance_score || '—'}</strong></span>
+                                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                                        <span>Risk: <strong className="text-gray-900 dark:text-gray-100">{s.avg_risk || 0}%</strong></span>
+                                        <span>Score: <strong className="text-gray-900 dark:text-gray-100">{s.performance_score || '—'}</strong></span>
                                     </div>
                                     <Button variant="secondary" size="sm" icon="⬇" className="w-full justify-center"
                                         onClick={() => handleDownload(s.session_id || 'default')}>
@@ -118,7 +118,7 @@ export default function ReportsPage() {
                     )}
                 </main>
             </div>
-            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border">{BRAND.copyright}</footer>
+            <footer className="py-6 text-center text-sm text-gray-400 border-t border-surface-border dark:border-slate-700">{BRAND.copyright}</footer>
         </div>
     );
 }

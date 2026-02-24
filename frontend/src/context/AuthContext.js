@@ -1,82 +1,112 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
+import { BACKEND_URL } from '../config/siteConfig';
 
 const AuthContext = createContext(null);
 
-function getStoredUsers() {
-    try { return JSON.parse(localStorage.getItem('stridex_users') || '[]'); }
-    catch { return []; }
+const TOKEN_KEY = 'stridex_token';
+const USER_KEY = 'stridex_user';
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+function saveSession(token, user) {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
-function storeUsers(users) {
-    localStorage.setItem('stridex_users', JSON.stringify(users));
+function clearSession() {
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(USER_KEY);
+    sessionStorage.removeItem('stridex_sessions');
 }
 
+// ── Provider ─────────────────────────────────────────────────────────────────
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
+    const [token, setToken] = useState(null);
+    const [authLoading, setAuthLoading] = useState(true);
 
+    // Restore session on mount
     useEffect(() => {
-        const saved = localStorage.getItem('stridex_user');
-        if (saved) {
-            try { setUser(JSON.parse(saved)); } catch { /* ignore */ }
+        const savedUser = localStorage.getItem(USER_KEY);
+        const savedToken = localStorage.getItem(TOKEN_KEY);
+        if (savedUser) {
+            try { setUser(JSON.parse(savedUser)); } catch { /* ignore */ }
         }
+        if (savedToken) setToken(savedToken);
+        setAuthLoading(false);
     }, []);
 
-    const signup = useCallback((email, password, name) => {
-        const users = getStoredUsers();
-        if (users.find(u => u.email === email)) {
-            throw new Error('An account with this email already exists.');
-        }
-        const newUser = { email, password, name: name || email.split('@')[0], role: 'athlete' };
-        users.push(newUser);
-        storeUsers(users);
-        const session = { email: newUser.email, name: newUser.name, role: newUser.role };
-        setUser(session);
-        localStorage.setItem('stridex_user', JSON.stringify(session));
-        return session;
+    // ── Signup (backend) ─────────────────────────────────────────────────────
+    const signup = useCallback(async (email, password, name, role = 'athlete') => {
+        const res = await axios.post(`${BACKEND_URL}/auth/signup`, { email, password, name, role });
+        const data = res.data;
+        setUser(data.user);
+        setToken(data.token);
+        saveSession(data.token, data.user);
+        return data.user;
     }, []);
 
-    const login = useCallback((email, password) => {
-        const users = getStoredUsers();
-        const found = users.find(u => u.email === email && u.password === password);
-        if (!found) {
-            throw new Error('Invalid email or password. Please sign up first.');
-        }
-        const session = { email: found.email, name: found.name, role: found.role };
-        setUser(session);
-        localStorage.setItem('stridex_user', JSON.stringify(session));
-        return session;
+    // ── Login (backend) ──────────────────────────────────────────────────────
+    const login = useCallback(async (email, password) => {
+        const res = await axios.post(`${BACKEND_URL}/auth/login`, { email, password });
+        const data = res.data;
+        setUser(data.user);
+        setToken(data.token);
+        saveSession(data.token, data.user);
+        return data.user;
     }, []);
 
+    // ── Google login (guest-style, stored locally) ───────────────────────────
     const loginWithGoogle = useCallback((googleUser) => {
-        // googleUser has { email, name, picture }
-        const users = getStoredUsers();
-        let found = users.find(u => u.email === googleUser.email);
-        if (!found) {
-            // Auto-register Google users
-            found = { email: googleUser.email, password: '__google__', name: googleUser.name, role: 'athlete', picture: googleUser.picture };
-            users.push(found);
-            storeUsers(users);
-        }
-        const session = { email: found.email, name: found.name || googleUser.name, role: found.role, picture: googleUser.picture || found.picture };
+        const session = {
+            email: googleUser.email,
+            name: googleUser.name,
+            role: 'athlete',
+            picture: googleUser.picture,
+            isGoogle: true,
+        };
         setUser(session);
-        localStorage.setItem('stridex_user', JSON.stringify(session));
+        setToken(null);
+        saveSession(null, session);
         return session;
     }, []);
 
-    const logout = useCallback(() => {
-        setUser(null);
-        localStorage.removeItem('stridex_user');
-        sessionStorage.removeItem('stridex_sessions'); // clear guest history
-    }, []);
-
+    // ── Guest login (no backend, no persistence) ─────────────────────────────
     const loginAsGuest = useCallback(() => {
         const guest = { email: 'guest@stridex.ai', name: 'Guest', role: 'athlete', isGuest: true };
         setUser(guest);
-        // Guest sessions are NOT stored to localStorage — they are lost on reload
+        setToken(null);
+        // NOT saved to localStorage intentionally
     }, []);
 
+    // ── Logout ───────────────────────────────────────────────────────────────
+    const logout = useCallback(() => {
+        setUser(null);
+        setToken(null);
+        clearSession();
+    }, []);
+
+    // ── Auth header helper ───────────────────────────────────────────────────
+    const authHeader = useCallback(() => {
+        return token ? { Authorization: `Bearer ${token}` } : {};
+    }, [token]);
+
     return (
-        <AuthContext.Provider value={{ user, isLoggedIn: !!user, isGuest: !!user?.isGuest, login, signup, loginWithGoogle, loginAsGuest, logout }}>
+        <AuthContext.Provider value={{
+            user,
+            token,
+            authLoading,
+            isLoggedIn: !!user,
+            isGuest: !!user?.isGuest,
+            isCoach: user?.role === 'coach',
+            isAthlete: user?.role === 'athlete' || !!user?.isGuest,
+            login,
+            signup,
+            loginWithGoogle,
+            loginAsGuest,
+            logout,
+            authHeader,
+        }}>
             {children}
         </AuthContext.Provider>
     );

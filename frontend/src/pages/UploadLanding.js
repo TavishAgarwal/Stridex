@@ -12,12 +12,14 @@ import StatusBadge from '../components/shared/StatusBadge';
 import SectionHeader from '../components/shared/SectionHeader';
 import ProgressBar from '../components/shared/ProgressBar';
 import CircularGauge from '../components/shared/CircularGauge';
+import ComparisonMode from '../components/ComparisonMode';
 import {
     BRAND, RISK_LEVELS, AI_FEATURES, PRO_TIPS,
     FEATURE_PILLS, INFO_CARDS, MODE_TABS,
 } from '../config/siteConfig';
 import useVideoAnalysis from '../hooks/useVideoAnalysis';
 import useFrameAnalysis from '../hooks/useFrameAnalysis';
+import EnhancedLiveCamera from '../components/EnhancedLiveCamera';
 
 /* ── MediaPipe pose skeleton connections ── */
 const POSE_CONNECTIONS = [
@@ -118,20 +120,20 @@ function VideoAnalysisPanel() {
                             <div className="flex-1 space-y-3">
                                 <div>
                                     <StatusBadge label={category || 'Analyzed'} variant={score >= 70 ? 'success' : score >= 40 ? 'warning' : 'danger'} />
-                                    {explanation && <p className="text-sm text-gray-600 mt-2">{explanation}</p>}
+                                    {explanation && <p className="text-sm text-gray-600 dark:text-gray-400 mt-2">{explanation}</p>}
                                 </div>
                                 <div className="grid grid-cols-3 gap-3 text-center">
-                                    <div className="bg-gray-50 rounded-xl p-2">
+                                    <div className="bg-gray-50 dark:bg-slate-700 rounded-xl p-2">
                                         <p className="text-[10px] text-gray-400 uppercase">Avg Risk</p>
-                                        <p className="text-lg font-bold text-gray-900">{summary.average_risk ?? '—'}%</p>
+                                        <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{summary.average_risk ?? '—'}%</p>
                                     </div>
-                                    <div className="bg-gray-50 rounded-xl p-2">
+                                    <div className="bg-gray-50 dark:bg-slate-700 rounded-xl p-2">
                                         <p className="text-[10px] text-gray-400 uppercase">Max Risk</p>
-                                        <p className="text-lg font-bold text-gray-900">{summary.max_risk ?? '—'}%</p>
+                                        <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{summary.max_risk ?? '—'}%</p>
                                     </div>
-                                    <div className="bg-gray-50 rounded-xl p-2">
+                                    <div className="bg-gray-50 dark:bg-slate-700 rounded-xl p-2">
                                         <p className="text-[10px] text-gray-400 uppercase">Frames</p>
-                                        <p className="text-lg font-bold text-gray-900">{summary.frames_analyzed ?? '—'}</p>
+                                        <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{summary.frames_analyzed ?? '—'}</p>
                                     </div>
                                 </div>
                                 {strengths.length > 0 && (
@@ -224,476 +226,11 @@ function drawSkeleton(ctx, landmarks, width, height, riskZones = {}) {
 }
 
 /* ─────────────────────────────────────────────
-   SUB-PANEL: Live Camera (inline telemetry + skeleton)
-   ───────────────────────────────────────────── */
-function LiveCameraPanel() {
-    const webcamRef = useRef(null);
-    const canvasRef = useRef(null);
-    const intervalRef = useRef(null);
-    const [isRecording, setIsRecording] = useState(false);
-    const [sessionTime, setSessionTime] = useState(0);
-    const [voiceEnabled, setVoiceEnabled] = useState(false);
-    const lastSpokenRef = useRef(0);
-    const { analyzeFrame, latestResult, isConnected, latency, resetSession } = useFrameAnalysis();
-
-    // Voice Alerts — speak warnings when risk exceeds threshold
-    useEffect(() => {
-        if (!voiceEnabled || !isRecording) return;
-        const athlete = latestResult?.athletes?.[0];
-        const riskScore = athlete?.risk_assessment?.risk_score ?? 0;
-        const now = Date.now();
-        if (riskScore >= 70 && now - lastSpokenRef.current > 8000) {
-            lastSpokenRef.current = now;
-            const factors = athlete?.risk_assessment?.risk_factors || [];
-            const topFactor = factors[0]?.factor || 'movement';
-            const msg = new SpeechSynthesisUtterance(`Warning: high injury risk at ${riskScore} percent. Check your ${topFactor.toLowerCase()}.`);
-            msg.rate = 1.1; msg.pitch = 1.0;
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(msg);
-        } else if (riskScore >= 40 && now - lastSpokenRef.current > 15000) {
-            lastSpokenRef.current = now;
-            const msg = new SpeechSynthesisUtterance(`Moderate risk detected. Focus on your form.`);
-            msg.rate = 1.0;
-            window.speechSynthesis.cancel();
-            window.speechSynthesis.speak(msg);
-        }
-    }, [latestResult, voiceEnabled, isRecording]);
-
-    useEffect(() => {
-        let t;
-        if (isRecording) t = setInterval(() => setSessionTime((s) => s + 1), 1000);
-        return () => clearInterval(t);
-    }, [isRecording]);
-
-    // Draw skeleton when result updates
-    useEffect(() => {
-        const athlete = latestResult?.athletes?.[0];
-        const landmarks = athlete?.landmarks;
-        const canvas = canvasRef.current;
-        const video = webcamRef.current?.video;
-        if (canvas && video) {
-            canvas.width = video.videoWidth || 640;
-            canvas.height = video.videoHeight || 480;
-            const ctx = canvas.getContext('2d');
-            drawSkeleton(ctx, landmarks, canvas.width, canvas.height, athlete?.risk_zones || {});
-        }
-    }, [latestResult]);
-
-    const fmt = (s) => `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
-
-    const captureAndAnalyze = useCallback(async () => {
-        if (!webcamRef.current) return;
-        const src = webcamRef.current.getScreenshot();
-        if (!src) return;
-        const blob = await fetch(src).then((r) => r.blob());
-        await analyzeFrame(blob);
-    }, [analyzeFrame]);
-
-    const handleStart = () => { setIsRecording(true); setSessionTime(0); intervalRef.current = setInterval(captureAndAnalyze, 1000); };
-    const handleStop = () => { setIsRecording(false); if (intervalRef.current) clearInterval(intervalRef.current); };
-    const handleReset = () => { handleStop(); setSessionTime(0); resetSession(); };
-
-    const athlete = latestResult?.athletes?.[0];
-    const risk = athlete?.risk_assessment || {};
-    const temporal = athlete?.temporal_analysis || {};
-    const bio = risk.biomechanics || {};
-    const kv = bio.knee_valgus || {};
-    const sa = bio.stride_asymmetry || {};
-    const posture = bio.posture || {};
-    const ef = bio.elbow_flare || {};
-    const ss = bio.shoulder_symmetry || {};
-    const wa = bio.wrist_alignment || {};
-    const bc = bio.body_context || {};
-    const riskScore = risk.risk_score ?? 0;
-    const riskLevel = risk.risk_level || '';
-    const riskFactors = risk.risk_factors || [];
-    const confidence = risk.overall_confidence ?? 0;
-
-    const fatigueScore = temporal.fatigue_score ?? 0;
-    const trendDir = temporal.trend_direction || 'stable';
-    const injuryProb = temporal.injury_probability ?? 0;
-    const mlRiskLevel = temporal.ml_risk_level || '';
-    const coaching = temporal.coaching_recommendation || {};
-
-    const parseAngle = (s) => (s ? parseFloat(String(s).replace('°', '')) : 0) || 0;
-    const parsePct = (s) => (s ? parseFloat(String(s).replace('%', '')) : 0) || 0;
-    const leftAngle = parseAngle(kv.left_angle);
-    const rightAngle = parseAngle(kv.right_angle);
-    const asymmetry = parsePct(sa.asymmetry_percent);
-    const postureScore = posture.posture_score ?? 1;
-    const elbowL = parseAngle(ef.left_angle);
-    const elbowR = parseAngle(ef.right_angle);
-    const shoulderAsym = ss.asymmetry_percent ?? 0;
-    const wristL = parseAngle(wa.left_angle);
-    const wristR = parseAngle(wa.right_angle);
-
-    const trendIcon = trendDir === 'degrading' ? '📉' : trendDir === 'improving' ? '📈' : '➡️';
-    const trendColor = trendDir === 'degrading' ? 'text-danger' : trendDir === 'improving' ? 'text-emerald' : 'text-gray-500';
-
-    return (
-        <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-lg font-bold text-gray-900">Live Session</h2>
-                    <p className="text-xs text-gray-500">Camera (USB) • 60fps</p>
-                </div>
-                <div className="flex items-center gap-2">
-                    <StatusBadge label={isConnected ? 'CONNECTED' : 'STANDBY'} variant={isConnected ? 'success' : 'neutral'} dot={isConnected ? 'bg-emerald' : undefined} />
-                    {mlRiskLevel && <StatusBadge label={`ML: ${mlRiskLevel}`} variant={mlRiskLevel === 'HIGH' ? 'danger' : mlRiskLevel === 'MEDIUM' ? 'warning' : 'success'} />}
-                    <span className="text-xs text-gray-400">Latency: {latency}ms</span>
-                </div>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-                <div className="space-y-4">
-                    <Card noPadding className="overflow-hidden">
-                        <div className="relative aspect-video bg-gray-900">
-                            <Webcam ref={webcamRef} audio={false} screenshotFormat="image/jpeg" className="w-full h-full object-cover" videoConstraints={{ facingMode: 'user' }} />
-                            {/* Skeleton overlay canvas */}
-                            <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" style={{ objectFit: 'cover' }} />
-                            {isRecording && (
-                                <div className="absolute top-3 left-3 flex items-center gap-2 bg-black/70 backdrop-blur-sm text-white px-3 py-1.5 rounded-lg text-xs font-bold">
-                                    <span className="w-2 h-2 bg-danger rounded-full animate-pulse" /> LIVE REC
-                                </div>
-                            )}
-                            {isRecording && (
-                                <div className="absolute top-3 right-3 space-y-1.5">
-                                    <div className={`px-3 py-1.5 rounded-lg text-xs font-bold text-white ${riskScore >= 70 ? 'bg-danger/80' : riskScore >= 40 ? 'bg-amber/80' : 'bg-emerald/80'}`}>
-                                        RISK: {riskScore}% {riskLevel && `• ${riskLevel}`}
-                                    </div>
-                                    <div className="bg-primary-600/80 text-white text-xs px-3 py-1.5 rounded-lg font-bold">
-                                        CONFIDENCE: {Math.round(confidence * 100)}%
-                                    </div>
-                                </div>
-                            )}
-                            <div className="absolute bottom-3 left-3 bg-black/60 text-white text-[10px] px-2 py-1 rounded font-mono">RES: 720p • FPS: 60</div>
-                        </div>
-                    </Card>
-
-                    {coaching.recommendation && coaching.recommendation !== 'Continue training' && (
-                        <Card className={`${coaching.recommendation === 'Substitute player' ? 'bg-danger/5 border-danger/30' : 'bg-amber/5 border-amber/30'} border`}>
-                            <div className="flex items-center gap-2 mb-1">
-                                <span className="text-base">{coaching.recommendation === 'Substitute player' ? '🚨' : '⚡'}</span>
-                                <h4 className="text-sm font-bold text-gray-900">{coaching.recommendation}</h4>
-                                <StatusBadge label="AI COACHING" variant={coaching.recommendation === 'Substitute player' ? 'danger' : 'warning'} />
-                            </div>
-                            <p className="text-xs text-gray-600">{coaching.reason}</p>
-                        </Card>
-                    )}
-
-                    {riskFactors.length > 0 && (
-                        <Card>
-                            <SectionHeader icon="⚠️" title="Active Risk Factors" className="mb-2" />
-                            <div className="flex flex-wrap gap-1.5">
-                                {riskFactors.map((rf, i) => (
-                                    <span key={i} className={`text-[10px] px-2 py-1 rounded-full font-semibold ${rf.severity === 'HIGH' ? 'bg-danger/10 text-danger' : rf.severity === 'MEDIUM' ? 'bg-amber/10 text-amber-dark' : 'bg-emerald/10 text-emerald-dark'}`}>
-                                        {rf.factor} ({rf.contribution}%)
-                                    </span>
-                                ))}
-                            </div>
-                        </Card>
-                    )}
-                </div>
-
-                <div className="space-y-3">
-                    <Card>
-                        <SectionHeader icon="📊" title="Real-Time Biometrics" />
-                        <p className="text-[10px] text-gray-400 mt-1">Live data from AI model v2.4</p>
-                    </Card>
-
-                    <Card className="py-3 px-5">
-                        <div className="grid grid-cols-3 gap-2 text-center">
-                            <div>
-                                <p className="text-[10px] text-gray-400 uppercase font-bold">Fatigue</p>
-                                <p className={`text-2xl font-bold ${fatigueScore > 60 ? 'text-danger' : fatigueScore > 30 ? 'text-amber-dark' : 'text-emerald'}`}>{fatigueScore}</p>
-                            </div>
-                            <div>
-                                <p className="text-[10px] text-gray-400 uppercase font-bold">Injury</p>
-                                <p className={`text-2xl font-bold ${injuryProb > 0.5 ? 'text-danger' : injuryProb > 0.25 ? 'text-amber-dark' : 'text-emerald'}`}>{Math.round(injuryProb * 100)}%</p>
-                            </div>
-                            <div>
-                                <p className="text-[10px] text-gray-400 uppercase font-bold">Trend</p>
-                                <p className={`text-2xl font-bold ${trendColor}`}>{trendIcon}</p>
-                                <p className={`text-[9px] capitalize ${trendColor}`}>{trendDir}</p>
-                            </div>
-                        </div>
-                        <ProgressBar value={fatigueScore} max={100} label="Fatigue" color={fatigueScore > 60 ? 'red' : fatigueScore > 30 ? 'amber' : 'emerald'} className="mt-2" />
-                    </Card>
-
-                    <Card className="py-4 px-5">
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">KNEE FLEXION (L)</p>
-                                <div className="flex items-baseline gap-1.5 mt-0.5">
-                                    <span className="text-3xl font-bold text-gray-900">{leftAngle || '--'}°</span>
-                                    <StatusBadge label={leftAngle >= 160 ? 'OK' : 'LOW'} variant={leftAngle >= 160 ? 'success' : 'warning'} />
-                                </div>
-                            </div>
-                            <CircularGauge value={Math.round((leftAngle / 180) * 100) || 0} max={100} color={leftAngle >= 160 ? 'blue' : 'amber'} size={48} />
-                        </div>
-                        <ProgressBar value={leftAngle} max={180} color={leftAngle >= 160 ? 'blue' : 'amber'} showLabel className="mt-2" />
-                    </Card>
-
-                    <Card className={`py-4 px-5 ${rightAngle < 160 && rightAngle > 0 ? 'ring-1 ring-amber/30 bg-amber/5' : ''}`}>
-                        <div className="flex items-start justify-between">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">KNEE FLEXION (R)</p>
-                                <div className="flex items-baseline gap-1.5 mt-0.5">
-                                    <span className="text-3xl font-bold text-gray-900">{rightAngle || '--'}°</span>
-                                    <StatusBadge label={rightAngle >= 160 ? 'OK' : '▲ LOW'} variant={rightAngle >= 160 ? 'success' : 'warning'} />
-                                </div>
-                            </div>
-                            <CircularGauge value={Math.round((rightAngle / 180) * 100) || 0} max={100} color={rightAngle >= 160 ? 'blue' : 'amber'} size={48} />
-                        </div>
-                        <ProgressBar value={rightAngle} max={180} color={rightAngle >= 160 ? 'blue' : 'amber'} className="mt-2" />
-                    </Card>
-
-                    <Card className="py-4 px-5">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">STRIDE ASYM.</p>
-                                <p className={`text-2xl font-bold ${asymmetry > 10 ? 'text-danger' : asymmetry > 5 ? 'text-amber-dark' : 'text-gray-900'}`}>{asymmetry || '--'}%</p>
-                                <StatusBadge label={sa.status || 'N/A'} variant={asymmetry > 10 ? 'danger' : asymmetry > 5 ? 'warning' : 'success'} />
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">POSTURE</p>
-                                <p className={`text-2xl font-bold ${postureScore < 0.7 ? 'text-danger' : postureScore < 0.85 ? 'text-amber-dark' : 'text-gray-900'}`}>{typeof postureScore === 'number' ? postureScore.toFixed(2) : '--'}</p>
-                                <StatusBadge label={posture.status || 'N/A'} variant={postureScore < 0.7 ? 'danger' : postureScore < 0.85 ? 'warning' : 'success'} />
-                            </div>
-                        </div>
-                    </Card>
-
-                    {/* New biomechanics cards */}
-                    <Card className="py-4 px-5">
-                        <div className="grid grid-cols-3 gap-3">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">ELBOW (L/R)</p>
-                                <p className={`text-xl font-bold ${(ef.left_risk || ef.right_risk) ? 'text-danger' : 'text-gray-900'}`}>{elbowL || '--'}° / {elbowR || '--'}°</p>
-                                <StatusBadge label={ef.status || 'N/A'} variant={ef.status === 'concern' ? 'danger' : ef.status === 'fair' ? 'warning' : 'success'} />
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">SHOULDER</p>
-                                <p className={`text-xl font-bold ${shoulderAsym > 15 ? 'text-danger' : shoulderAsym > 10 ? 'text-amber-dark' : 'text-gray-900'}`}>{typeof shoulderAsym === 'number' ? shoulderAsym.toFixed(1) : '--'}%</p>
-                                <StatusBadge label={ss.status || 'N/A'} variant={ss.status === 'concern' ? 'danger' : ss.status === 'fair' ? 'warning' : 'success'} />
-                            </div>
-                            <div>
-                                <p className="text-[10px] font-bold uppercase text-gray-400 tracking-wider">WRIST (L/R)</p>
-                                <p className={`text-xl font-bold ${(wa.left_risk || wa.right_risk) ? 'text-danger' : 'text-gray-900'}`}>{wristL || '--'}° / {wristR || '--'}°</p>
-                                <StatusBadge label={wa.status || 'N/A'} variant={wa.status === 'concern' ? 'danger' : wa.status === 'fair' ? 'warning' : 'success'} />
-                            </div>
-                        </div>
-                    </Card>
-
-                    {bc.label && (
-                        <div className="px-3 py-2 bg-primary-50 text-primary-700 rounded-xl text-xs font-semibold text-center">
-                            🎯 Smart Detection: {bc.label} — {bc.description}
-                        </div>
-                    )}
-                </div>
-            </div>
-
-            <Card className="flex flex-wrap items-center gap-3">
-                {!isRecording ? (
-                    <Button variant="success" icon="🔴" onClick={handleStart}>Start Rec</Button>
-                ) : (
-                    <Button variant="danger" icon="⏹" onClick={handleStop}>Stop Rec</Button>
-                )}
-                <Button variant="secondary" icon="🔄" onClick={handleReset}>Reset Session</Button>
-                <Button variant="secondary" icon={voiceEnabled ? '🔊' : '🔇'}
-                    onClick={() => { setVoiceEnabled(!voiceEnabled); if (voiceEnabled) window.speechSynthesis.cancel(); }}
-                    className={voiceEnabled ? 'ring-2 ring-primary-400' : ''}>
-                    {voiceEnabled ? 'Voice On' : 'Voice Off'}
-                </Button>
-                <Button variant="secondary" icon="📸"
-                    onClick={() => {
-                        const video = webcamRef.current?.video;
-                        const canvas = canvasRef.current;
-                        if (!video) return;
-                        const c2 = document.createElement('canvas');
-                        c2.width = video.videoWidth || 640; c2.height = video.videoHeight || 480;
-                        const ctx = c2.getContext('2d');
-                        ctx.drawImage(video, 0, 0, c2.width, c2.height);
-                        if (canvas) ctx.drawImage(canvas, 0, 0, c2.width, c2.height);
-                        ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, c2.height - 40, c2.width, 40);
-                        ctx.fillStyle = '#fff'; ctx.font = 'bold 14px Inter';
-                        ctx.fillText(`STRIDEX-AI • Risk: ${riskScore}% • ${riskLevel} • ${new Date().toLocaleString()}`, 10, c2.height - 15);
-                        c2.toBlob(blob => { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `stridex_screenshot_${Date.now()}.png`; a.click(); });
-                    }}>
-                    Screenshot
-                </Button>
-                <div className="ml-auto flex items-center gap-2 text-sm text-gray-600">
-                    <span>⏱</span>
-                    <span className="font-mono font-bold text-gray-900">Session Time: {fmt(sessionTime)}</span>
-                </div>
-            </Card>
-        </div>
-    );
-}
-
-/* ─────────────────────────────────────────────
-   SUB-PANEL: Compare Videos + risk delta
+   SUB-PANEL: Compare Videos — Full Intelligence Dashboard
    ───────────────────────────────────────────── */
 function CompareVideosPanel() {
-    const [fileA, setFileA] = useState(null);
-    const [fileB, setFileB] = useState(null);
-    const [resultA, setResultA] = useState(null);
-    const [resultB, setResultB] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const analyzerA = useVideoAnalysis();
-    const analyzerB = useVideoAnalysis();
-
-    const handleCompare = async () => {
-        if (!fileA || !fileB) return;
-        setLoading(true);
-        try {
-            const [rA, rB] = await Promise.all([analyzerA.analyze(fileA), analyzerB.analyze(fileB)]);
-            setResultA(rA);
-            setResultB(rB);
-        } catch (_) { /* handled */ }
-        setLoading(false);
-    };
-
-    const sA = resultA?.analysis_summary || {};
-    const sB = resultB?.analysis_summary || {};
-    const scoreA = sA.overall_video_score ?? 0;
-    const scoreB = sB.overall_video_score ?? 0;
-    const riskA = sA.average_risk ?? 0;
-    const riskB = sB.average_risk ?? 0;
-    const maxA = sA.max_risk ?? 0;
-    const maxB = sB.max_risk ?? 0;
-
-    const scoreDelta = scoreB - scoreA;
-    const riskDelta = riskB - riskA;
-    const maxDelta = maxB - maxA;
-
-    const DeltaIndicator = ({ delta, label, invertColors }) => {
-        const improved = invertColors ? delta < 0 : delta > 0;
-        const color = delta === 0 ? 'text-gray-400' : improved ? 'text-emerald' : 'text-danger';
-        const arrow = delta > 0 ? '↑' : delta < 0 ? '↓' : '—';
-        return (
-            <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-500">{label}</span>
-                <span className={`font-bold ${color}`}>{arrow} {Math.abs(delta).toFixed(1)}%</span>
-            </div>
-        );
-    };
-
-    const ScoreCard = ({ label, data }) => {
-        if (!data) return null;
-        const s = data.analysis_summary || {};
-        const score = s.overall_video_score ?? 0;
-        return (
-            <Card className="flex-1">
-                <h4 className="text-sm font-bold text-gray-700 mb-3">{label}</h4>
-                <div className="flex items-center gap-4">
-                    <CircularGauge value={score} max={100} color={score >= 70 ? 'emerald' : score >= 40 ? 'amber' : 'red'} size={90} />
-                    <div className="space-y-1 text-sm">
-                        <p className="text-gray-500">Risk: <span className="font-bold text-gray-900">{s.average_risk ?? '-'}%</span></p>
-                        <p className="text-gray-500">Max: <span className="font-bold text-gray-900">{s.max_risk ?? '-'}%</span></p>
-                        <p className="text-gray-500">Frames: <span className="font-bold text-gray-900">{s.frames_analyzed ?? '-'}</span></p>
-                        <StatusBadge label={s.risk_category || 'N/A'} variant={score >= 70 ? 'success' : score >= 40 ? 'warning' : 'danger'} />
-                    </div>
-                </div>
-            </Card>
-        );
-    };
-
-    return (
-        <div className="space-y-4">
-            <Card className="bg-gradient-to-r from-purple to-purple-dark border-0 text-white">
-                <div className="flex items-center gap-3 mb-3">
-                    <span className="text-2xl">⇋</span>
-                    <h2 className="text-xl font-bold">Compare Two Videos</h2>
-                </div>
-                <p className="text-sm text-purple-100 max-w-lg mb-4">
-                    Upload two recordings to compare biomechanics side-by-side. See improvements or regressions between sessions.
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <label className="flex items-center gap-2 px-4 py-3 bg-white text-gray-800 rounded-xl text-sm font-semibold cursor-pointer hover:bg-gray-50 transition-colors">
-                        <span>📁</span>
-                        <span>{fileA ? fileA.name : 'Video A — Before'}</span>
-                        <input type="file" accept="video/*" className="hidden" onChange={(e) => { setFileA(e.target.files[0]); setResultA(null); setResultB(null); }} />
-                    </label>
-                    <label className="flex items-center gap-2 px-4 py-3 bg-white text-gray-800 rounded-xl text-sm font-semibold cursor-pointer hover:bg-gray-50 transition-colors">
-                        <span>📁</span>
-                        <span>{fileB ? fileB.name : 'Video B — After'}</span>
-                        <input type="file" accept="video/*" className="hidden" onChange={(e) => { setFileB(e.target.files[0]); setResultA(null); setResultB(null); }} />
-                    </label>
-                </div>
-                <Button
-                    variant="secondary"
-                    className="mt-4 bg-white/20 border-white/30 text-white hover:bg-white/30"
-                    onClick={handleCompare}
-                    disabled={!fileA || !fileB || loading}
-                    icon="⚡"
-                >
-                    {loading ? 'Analyzing…' : 'Compare Now'}
-                </Button>
-                {(analyzerA.error || analyzerB.error) && (
-                    <div className="bg-danger/10 border border-danger/30 text-danger px-4 py-3 rounded-xl mt-4">
-                        <p className="text-sm font-bold">Analysis Failed</p>
-                        <p className="text-xs mt-1">{analyzerA.error || analyzerB.error}</p>
-                    </div>
-                )}
-            </Card>
-
-            {(resultA || resultB) && (
-                <>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <ScoreCard label="Video A — Before" data={resultA} />
-                        <ScoreCard label="Video B — After" data={resultB} />
-                    </div>
-
-                    {resultA && resultB && (
-                        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
-                            <Card>
-                                <SectionHeader icon="📈" title="Change Analysis (Before → After)" className="mb-4" />
-                                <div className="space-y-3">
-                                    <DeltaIndicator delta={scoreDelta} label="Performance Score" invertColors={false} />
-                                    <DeltaIndicator delta={riskDelta} label="Average Risk" invertColors={true} />
-                                    <DeltaIndicator delta={maxDelta} label="Peak Risk" invertColors={true} />
-                                </div>
-                                {/* Biomechanics comparison */}
-                                {(() => {
-                                    const bioA = resultA?.video_biomechanics || {};
-                                    const bioB = resultB?.video_biomechanics || {};
-                                    const metrics = ['knee_valgus', 'stride_asymmetry', 'posture', 'elbow_flare', 'shoulder_symmetry', 'wrist_alignment'];
-                                    const getVal = (bio, key) => {
-                                        const m = bio[key] || {};
-                                        if (m.avg_angle !== undefined && m.avg_angle !== null) return m.avg_angle;
-                                        if (m.avg_score !== undefined && m.avg_score !== null) return m.avg_score * 100;
-                                        if (m.avg_asymmetry !== undefined && m.avg_asymmetry !== null) return m.avg_asymmetry;
-                                        return null;
-                                    };
-                                    const items = metrics.map(k => ({ title: (bioA[k] || bioB[k] || {}).title || k, a: getVal(bioA, k), b: getVal(bioB, k) })).filter(i => i.a !== null && i.b !== null);
-                                    if (!items.length) return null;
-                                    return (
-                                        <div className="mt-4 pt-4 border-t border-surface-border">
-                                            <p className="text-xs font-bold uppercase text-gray-400 mb-3">Biomechanics Comparison</p>
-                                            <div className="space-y-2">
-                                                {items.map((it, i) => {
-                                                    const d = it.b - it.a;
-                                                    return <DeltaIndicator key={i} delta={d} label={it.title} invertColors={it.title.includes('Risk') || it.title.includes('Asymmetry')} />;
-                                                })}
-                                            </div>
-                                        </div>
-                                    );
-                                })()}
-                                <div className={`mt-4 p-3 rounded-xl border text-sm ${riskDelta < 0 ? 'bg-emerald/5 border-emerald/20 text-emerald-dark' : riskDelta > 0 ? 'bg-danger/5 border-danger/20 text-danger' : 'bg-gray-50 border-surface-border text-gray-500'}`}>
-                                    {riskDelta < 0
-                                        ? `✅ Great improvement! Average risk decreased by ${Math.abs(riskDelta).toFixed(1)}%. Your technique is getting safer.`
-                                        : riskDelta > 0
-                                            ? `⚠️ Risk has increased by ${riskDelta.toFixed(1)}%. Consider reviewing the recommendations in the full analysis.`
-                                            : `➡️ Risk level is unchanged between the two sessions.`
-                                    }
-                                </div>
-                            </Card>
-                        </motion.div>
-                    )}
-                </>
-            )}
-        </div>
-    );
+    // Delegate entirely to the ComparisonMode intelligence dashboard
+    return <ComparisonMode />;
 }
 
 /* ─────────────────────────────────────────────
@@ -708,22 +245,22 @@ export default function UploadLanding() {
     const recentSessions = JSON.parse(store.getItem('stridex_sessions') || '[]').slice(0, 5);
 
     return (
-        <div className="min-h-screen bg-surface-secondary">
+        <div className="min-h-screen bg-surface-secondary dark:bg-[#050d1a] transition-colors duration-300">
             <TopNavbar />
 
-            <div className="max-w-7xl mx-auto px-6 py-10">
+            <div className="max-w-[1600px] mx-auto px-4 py-10">
                 <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
                     {/* Left Column */}
                     <div className="space-y-8">
                         {/* Hero */}
                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="space-y-4">
-                            <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 leading-tight">
+                            <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-gray-100 leading-tight">
                                 Advanced Biomechanical{' '}
                                 <span className="bg-gradient-to-r from-primary-600 via-purple to-cyan bg-clip-text text-transparent">
                                     Injury Risk Detection
                                 </span>
                             </h1>
-                            <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500">
+                            <div className="flex flex-wrap items-center gap-3 text-sm text-gray-500 dark:text-gray-400">
                                 {FEATURE_PILLS.map((p) => (
                                     <span key={p.label} className="flex items-center gap-1.5"><span>{p.icon}</span><span>{p.label}</span></span>
                                 ))}
@@ -731,14 +268,14 @@ export default function UploadLanding() {
                         </motion.div>
 
                         {/* Mode Tabs */}
-                        <div className="flex items-center bg-white rounded-2xl shadow-glass border border-surface-border p-1.5 w-fit">
+                        <div className="flex items-center bg-white dark:bg-slate-800 rounded-2xl shadow-glass dark:shadow-none border border-surface-border dark:border-slate-700 p-1.5 w-fit">
                             {MODE_TABS.map((tab) => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveMode(tab.id)}
                                     className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all duration-200 ${activeMode === tab.id
                                         ? 'bg-primary-600 text-white shadow-md'
-                                        : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
+                                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-700'
                                         }`}
                                 >
                                     <span>{tab.icon}</span><span>{tab.label}</span>
@@ -749,7 +286,7 @@ export default function UploadLanding() {
                         {/* Content area */}
                         <div className="mt-6">
                             {activeMode === 'video' && <VideoAnalysisPanel />}
-                            {activeMode === 'camera' && <LiveCameraPanel />}
+                            {activeMode === 'camera' && <EnhancedLiveCamera />}
                             {activeMode === 'compare' && <CompareVideosPanel />}
                         </div>
 
@@ -760,9 +297,9 @@ export default function UploadLanding() {
                                         <Card className="hover:shadow-glass-lg transition-shadow">
                                             <div className="flex items-center gap-3 mb-3">
                                                 <span className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg ${card.iconBg}`}>{card.icon}</span>
-                                                <h3 className="text-base font-bold text-gray-900">{card.title}</h3>
+                                                <h3 className="text-base font-bold text-gray-900 dark:text-gray-100">{card.title}</h3>
                                             </div>
-                                            <p className="text-sm text-gray-500 leading-relaxed">{card.description}</p>
+                                            <p className="text-sm text-gray-500 dark:text-gray-400 leading-relaxed">{card.description}</p>
                                         </Card>
                                     </motion.div>
                                 ))}
@@ -778,7 +315,7 @@ export default function UploadLanding() {
                             <div className="flex gap-1">
                                 {['amateur', 'semi-pro', 'pro'].map(p => (
                                     <button key={p} onClick={() => { setAthleteProfile(p); localStorage.setItem('stridex_profile', p); }}
-                                        className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all ${athleteProfile === p ? 'bg-primary-600 text-white shadow-md' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'}`}>
+                                        className={`flex-1 py-2 px-2 text-xs font-bold rounded-lg capitalize transition-all ${athleteProfile === p ? 'bg-primary-600 text-white shadow-md' : 'bg-gray-100 dark:bg-slate-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-600'}`}>
                                         {p === 'semi-pro' ? 'Semi-Pro' : p.charAt(0).toUpperCase() + p.slice(1)}
                                     </button>
                                 ))}
@@ -801,9 +338,9 @@ export default function UploadLanding() {
                                     {recentSessions.length === 0 ? (
                                         <p className="text-xs text-gray-400 italic">No sessions yet. Analyze a video to create your first session.</p>
                                     ) : recentSessions.map((s, i) => (
-                                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 rounded-lg px-3 py-2">
+                                        <div key={i} className="flex items-center justify-between text-xs bg-gray-50 dark:bg-slate-700 rounded-lg px-3 py-2">
                                             <div>
-                                                <p className="font-semibold text-gray-700 truncate max-w-[140px]">{s.fileName || 'Session'}</p>
+                                                <p className="font-semibold text-gray-700 dark:text-gray-300 truncate max-w-[140px]">{s.fileName || 'Session'}</p>
                                                 <p className="text-gray-400">{new Date(s.date).toLocaleDateString()}</p>
                                             </div>
                                             <span className={`font-bold ${s.score >= 70 ? 'text-emerald' : s.score >= 40 ? 'text-amber-dark' : 'text-danger'}`}>{s.score}/100</span>
@@ -832,20 +369,20 @@ export default function UploadLanding() {
                         <Card>
                             <SectionHeader icon="🔬" title="AI Features" className="mb-4" />
                             <ul className="space-y-3">
-                                {AI_FEATURES.map((f) => <li key={f.label} className="flex items-center gap-2.5 text-sm text-gray-600"><span className="text-base">{f.icon}</span><span>{f.label}</span></li>)}
+                                {AI_FEATURES.map((f) => <li key={f.label} className="flex items-center gap-2.5 text-sm text-gray-600 dark:text-gray-400"><span className="text-base">{f.icon}</span><span>{f.label}</span></li>)}
                             </ul>
                         </Card>
                         <Card>
                             <SectionHeader icon="💡" title="Pro Tips" className="mb-4" />
                             <ul className="space-y-3">
-                                {PRO_TIPS.map((tip) => <li key={tip.label} className="flex items-center gap-2.5 text-sm text-gray-600"><span className="text-base">{tip.icon}</span><span>{tip.label}</span></li>)}
+                                {PRO_TIPS.map((tip) => <li key={tip.label} className="flex items-center gap-2.5 text-sm text-gray-600 dark:text-gray-400"><span className="text-base">{tip.icon}</span><span>{tip.label}</span></li>)}
                             </ul>
                         </Card>
                     </motion.aside>
                 </div>
             </div>
 
-            <footer className="mt-16 py-6 text-center text-sm text-gray-400 border-t border-surface-border">
+            <footer className="mt-16 py-6 text-center text-sm text-gray-400 border-t border-surface-border dark:border-slate-700">
                 {BRAND.copyright}
             </footer>
         </div>

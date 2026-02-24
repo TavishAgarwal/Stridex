@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { FiActivity, FiShield, FiTrendingUp, FiZap, FiArrowRight, FiPlay, FiCheckCircle, FiLogIn } from 'react-icons/fi';
+import { useTheme } from '../context/ThemeContext';
+import { FiActivity, FiShield, FiTrendingUp, FiZap, FiArrowRight, FiPlay, FiCheckCircle, FiLogIn, FiSun, FiMoon } from 'react-icons/fi';
 
 const stats = [
   { value: '94%', label: 'Detection Accuracy', sub: 'Pose landmark precision' },
@@ -77,8 +78,43 @@ function AnimatedCounter({ target, suffix = '', duration = 2000 }) {
 export default function LandingPage() {
   const navigate = useNavigate();
   const { isLoggedIn } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
   const [sportIndex, setSportIndex] = useState(0);
   const [started, setStarted] = useState(false);
+
+  // Theme-aware color map
+  const t = {
+    bg: isDark ? '#050d1a' : '#f8fafc',
+    navBg: isDark ? 'rgba(5,13,26,0.85)' : 'rgba(255,255,255,0.85)',
+    navBorder: isDark ? 'rgba(6,182,212,0.15)' : 'rgba(0,0,0,0.08)',
+    text: isDark ? 'white' : '#0f172a',
+    textMuted: isDark ? '#94a3b8' : '#64748b',
+    textDim: isDark ? '#475569' : '#94a3b8',
+    textSubtle: isDark ? '#64748b' : '#94a3b8',
+    textFooter: isDark ? '#334155' : '#94a3b8',
+    navLink: isDark ? '#94a3b8' : '#64748b',
+    navLinkHover: isDark ? '#06b6d4' : '#0f172a',
+    loginBtnBg: isDark ? 'transparent' : 'transparent',
+    loginBtnColor: isDark ? '#06b6d4' : '#1e3a8a',
+    loginBtnBorder: isDark ? 'rgba(6,182,212,0.4)' : 'rgba(30,58,138,0.3)',
+    cardBg: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+    cardBorder: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
+    sectionBorder: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.06)',
+    sectionBg: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
+    vizBg: isDark
+      ? 'linear-gradient(135deg, rgba(30,58,138,0.15), rgba(6,182,212,0.08))'
+      : 'linear-gradient(135deg, rgba(30,58,138,0.08), rgba(6,182,212,0.05))',
+    vizBorder: isDark ? 'rgba(6,182,212,0.2)' : 'rgba(30,58,138,0.15)',
+    vizShadow: isDark ? '0 30px 80px rgba(0,0,0,0.5)' : '0 30px 80px rgba(0,0,0,0.12)',
+    vizBottomBg: isDark ? 'linear-gradient(0deg, rgba(5,13,26,0.95), transparent)' : 'linear-gradient(0deg, rgba(248,250,252,0.95), transparent)',
+    gridLine: isDark ? 'rgba(6,182,212,0.04)' : 'rgba(30,58,138,0.04)',
+    secondaryBtnBg: isDark ? 'transparent' : 'transparent',
+    secondaryBtnColor: isDark ? '#94a3b8' : '#475569',
+    secondaryBtnBorder: isDark ? 'rgba(148,163,184,0.3)' : 'rgba(0,0,0,0.15)',
+    toggleBg: isDark ? 'rgba(6,182,212,0.15)' : 'rgba(0,0,0,0.06)',
+    toggleColor: isDark ? '#06b6d4' : '#475569',
+  };
 
   useEffect(() => {
     const interval = setInterval(() => setSportIndex(i => (i + 1) % sports.length), 1800);
@@ -104,10 +140,11 @@ export default function LandingPage() {
           transition={{ duration: 0.6 }}
           style={{
             minHeight: '100vh',
-            background: '#050d1a',
-            color: 'white',
+            background: t.bg,
+            color: t.text,
             fontFamily: "'DM Sans', 'Segoe UI', sans-serif",
             overflowX: 'hidden',
+            transition: 'background 0.3s ease, color 0.3s ease',
           }}
         >
           {/* Google Fonts */}
@@ -139,8 +176,8 @@ export default function LandingPage() {
           <nav style={{
             position: 'fixed', top: 0, left: 0, right: 0, zIndex: 100,
             padding: '16px 48px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            background: 'rgba(5,13,26,0.85)', backdropFilter: 'blur(20px)',
-            borderBottom: '1px solid rgba(6,182,212,0.15)'
+            background: t.navBg, backdropFilter: 'blur(20px)',
+            borderBottom: `1px solid ${t.navBorder}`
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <div style={{
@@ -158,17 +195,29 @@ export default function LandingPage() {
             <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
               {['Features', 'How It Works', 'Sports'].map(item => (
                 <a key={item} href={`#${item.toLowerCase().replaceAll(' ', '-')}`}
-                  style={{ color: '#94a3b8', textDecoration: 'none', fontSize: '14px', fontWeight: '500', transition: 'color 0.2s' }}
-                  onMouseEnter={e => e.target.style.color = '#06b6d4'}
-                  onMouseLeave={e => e.target.style.color = '#94a3b8'}>
+                  style={{ color: t.navLink, textDecoration: 'none', fontSize: '14px', fontWeight: '500', transition: 'color 0.2s' }}
+                  onMouseEnter={e => e.target.style.color = t.navLinkHover}
+                  onMouseLeave={e => e.target.style.color = t.navLink}>
                   {item}
                 </a>
               ))}
+              {/* Theme toggle */}
+              <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}
+                onClick={toggleTheme}
+                style={{
+                  padding: '8px', background: t.toggleBg,
+                  border: 'none', borderRadius: '8px',
+                  cursor: 'pointer', color: t.toggleColor,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                }}
+                title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
+                {isDark ? <FiSun style={{ fontSize: '16px' }} /> : <FiMoon style={{ fontSize: '16px' }} />}
+              </motion.button>
               <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                 onClick={() => navigate('/login')}
                 style={{
                   padding: '9px 18px', background: 'transparent',
-                  color: '#06b6d4', border: '1px solid rgba(6,182,212,0.4)', borderRadius: '8px',
+                  color: t.loginBtnColor, border: `1px solid ${t.loginBtnBorder}`, borderRadius: '8px',
                   cursor: 'pointer', fontSize: '13px', fontWeight: '600',
                   display: 'flex', alignItems: 'center', gap: '6px'
                 }}>
@@ -191,7 +240,7 @@ export default function LandingPage() {
             {/* Background grid */}
             <div style={{
               position: 'absolute', inset: 0, zIndex: 0,
-              backgroundImage: 'linear-gradient(rgba(6,182,212,0.04) 1px, transparent 1px), linear-gradient(90deg, rgba(6,182,212,0.04) 1px, transparent 1px)',
+              backgroundImage: `linear-gradient(${t.gridLine} 1px, transparent 1px), linear-gradient(90deg, ${t.gridLine} 1px, transparent 1px)`,
               backgroundSize: '60px 60px'
             }} />
             {/* Radial glow */}
@@ -236,13 +285,13 @@ export default function LandingPage() {
                   START <span className="glow-cyan" style={{ color: '#06b6d4' }}>MEASURING.</span>
                 </h1>
 
-                <p style={{ fontSize: '1.15rem', color: '#94a3b8', lineHeight: 1.7, marginBottom: '20px', maxWidth: '520px' }}>
+                <p style={{ fontSize: '1.15rem', color: t.textMuted, lineHeight: 1.7, marginBottom: '20px', maxWidth: '520px' }}>
                   STRIDEX-AI detects injury risk before it becomes an injury. Upload any sports video and get a complete biomechanical breakdown in under 10 seconds.
                 </p>
 
                 {/* Sport ticker */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '40px' }}>
-                  <span style={{ color: '#475569', fontSize: '14px' }}>Works for</span>
+                  <span style={{ color: t.textDim, fontSize: '14px' }}>Works for</span>
                   <AnimatePresence mode="wait">
                     <motion.span key={sportIndex}
                       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
@@ -269,8 +318,8 @@ export default function LandingPage() {
                     onClick={handleEnter}
                     style={{
                       padding: '18px 32px', fontSize: '17px', fontWeight: '600',
-                      background: 'transparent', color: '#94a3b8',
-                      border: '1px solid rgba(148,163,184,0.3)', borderRadius: '12px', cursor: 'pointer',
+                      color: t.secondaryBtnColor,
+                      border: `1px solid ${t.secondaryBtnBorder}`, borderRadius: '12px', cursor: 'pointer',
                       display: 'flex', alignItems: 'center', gap: '10px',
                     }}>
                     Live Camera <FiArrowRight />
@@ -284,9 +333,9 @@ export default function LandingPage() {
                 style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
                 <div style={{
                   position: 'relative', width: '420px', height: '520px',
-                  background: 'linear-gradient(135deg, rgba(30,58,138,0.15), rgba(6,182,212,0.08))',
-                  borderRadius: '28px', border: '1px solid rgba(6,182,212,0.2)',
-                  boxShadow: '0 30px 80px rgba(0,0,0,0.5)', overflow: 'hidden',
+                  background: t.vizBg,
+                  borderRadius: '28px', border: `1px solid ${t.vizBorder}`,
+                  boxShadow: t.vizShadow, overflow: 'hidden',
                   animation: 'float 4s ease-in-out infinite'
                 }}>
                   {/* Scan line */}
@@ -361,7 +410,7 @@ export default function LandingPage() {
                   <div style={{
                     position: 'absolute', bottom: 0, left: 0, right: 0,
                     padding: '16px 20px',
-                    background: 'linear-gradient(0deg, rgba(5,13,26,0.95), transparent)',
+                    background: t.vizBottomBg,
                     display: 'flex', justifyContent: 'space-between'
                   }}>
                     {[['Knee L', '142°', '#ef4444'], ['Asymmetry', '14.2%', '#f97316'], ['Posture', '0.71', '#10b981']].map(([k, v, c]) => (
@@ -377,7 +426,7 @@ export default function LandingPage() {
           </section>
 
           {/* STATS */}
-          <section style={{ padding: '60px 48px', borderTop: '1px solid rgba(255,255,255,0.05)', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+          <section style={{ padding: '60px 48px', borderTop: `1px solid ${t.sectionBorder}`, borderBottom: `1px solid ${t.sectionBorder}` }}>
             <div style={{ maxWidth: '1200px', margin: '0 auto', display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '40px' }}>
               {stats.map((s, i) => (
                 <motion.div key={i} initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }}
@@ -390,8 +439,8 @@ export default function LandingPage() {
                   }}>
                     <AnimatedCounter target={s.value} />
                   </div>
-                  <div style={{ color: 'white', fontWeight: '600', fontSize: '15px' }}>{s.label}</div>
-                  <div style={{ color: '#475569', fontSize: '13px', marginTop: '4px' }}>{s.sub}</div>
+                  <div style={{ color: t.text, fontWeight: '600', fontSize: '15px' }}>{s.label}</div>
+                  <div style={{ color: t.textDim, fontSize: '13px', marginTop: '4px' }}>{s.sub}</div>
                 </motion.div>
               ))}
             </div>
@@ -415,13 +464,13 @@ export default function LandingPage() {
                     initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.08 }}
                     style={{
                       padding: '32px', borderRadius: '20px',
-                      background: `linear-gradient(135deg, ${f.color}12, ${f.color}06)`,
-                      border: `1px solid ${f.color}25`,
+                      background: isDark ? `linear-gradient(135deg, ${f.color}12, ${f.color}06)` : `linear-gradient(135deg, ${f.color}10, ${f.color}05)`,
+                      border: `1px solid ${isDark ? `${f.color}25` : `${f.color}20`}`,
                       boxShadow: `0 10px 40px ${f.color}10`
                     }}>
                     <div style={{ fontSize: '2.5rem', marginBottom: '16px' }}>{f.icon}</div>
-                    <h3 style={{ color: 'white', fontWeight: '700', fontSize: '1.1rem', marginBottom: '12px' }}>{f.title}</h3>
-                    <p style={{ color: '#64748b', fontSize: '14px', lineHeight: 1.7 }}>{f.desc}</p>
+                    <h3 style={{ color: t.text, fontWeight: '700', fontSize: '1.1rem', marginBottom: '12px' }}>{f.title}</h3>
+                    <p style={{ color: t.textSubtle, fontSize: '14px', lineHeight: 1.7 }}>{f.desc}</p>
                   </motion.div>
                 ))}
               </div>
@@ -429,7 +478,7 @@ export default function LandingPage() {
           </section>
 
           {/* HOW IT WORKS */}
-          <section id="how-it-works" style={{ padding: '80px 48px', background: 'rgba(255,255,255,0.02)', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+          <section id="how-it-works" style={{ padding: '80px 48px', background: t.sectionBg, borderTop: `1px solid ${t.sectionBorder}` }}>
             <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
               <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} style={{ textAlign: 'center', marginBottom: '60px' }}>
                 <div style={{ color: '#8b5cf6', fontWeight: '600', fontSize: '13px', letterSpacing: '3px', textTransform: 'uppercase', marginBottom: '16px' }}>HOW IT WORKS</div>
@@ -456,8 +505,8 @@ export default function LandingPage() {
                       {s.icon}
                     </div>
                     <div style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '3.5rem', color: `${s.color}30`, lineHeight: 1, marginBottom: '8px' }}>{s.step}</div>
-                    <h3 style={{ color: 'white', fontWeight: '700', fontSize: '1.1rem', marginBottom: '10px' }}>{s.title}</h3>
-                    <p style={{ color: '#64748b', fontSize: '14px', lineHeight: 1.7 }}>{s.desc}</p>
+                    <h3 style={{ color: t.text, fontWeight: '700', fontSize: '1.1rem', marginBottom: '10px' }}>{s.title}</h3>
+                    <p style={{ color: t.textSubtle, fontSize: '14px', lineHeight: 1.7 }}>{s.desc}</p>
                   </motion.div>
                 ))}
               </div>
@@ -476,7 +525,7 @@ export default function LandingPage() {
                     <motion.div key={i} whileHover={{ scale: 1.1, background: 'rgba(6,182,212,0.15)' }}
                       style={{
                         padding: '12px 24px', borderRadius: '30px',
-                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)',
+                        background: t.cardBg, border: `1px solid ${t.cardBorder}`,
                         fontSize: '15px', fontWeight: '500', cursor: 'default',
                         transition: 'all 0.2s'
                       }}>
@@ -501,7 +550,7 @@ export default function LandingPage() {
               <h2 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: 'clamp(2.5rem, 5vw, 4.5rem)', marginBottom: '20px', letterSpacing: '1px' }}>
                 YOUR NEXT INJURY IS <br /><span style={{ color: '#ef4444' }}>ALREADY VISIBLE</span> IN YOUR DATA.
               </h2>
-              <p style={{ color: '#64748b', fontSize: '1.1rem', marginBottom: '40px', maxWidth: '500px', margin: '0 auto 40px' }}>
+              <p style={{ color: t.textSubtle, fontSize: '1.1rem', marginBottom: '40px', maxWidth: '500px', margin: '0 auto 40px' }}>
                 Don't wait for the snap. Detect it now.
               </p>
               <motion.button whileHover={{ scale: 1.06, boxShadow: '0 30px 80px rgba(6,182,212,0.5)' }} whileTap={{ scale: 0.95 }}
@@ -520,11 +569,11 @@ export default function LandingPage() {
           </section>
 
           {/* Footer */}
-          <footer style={{ padding: '32px 48px', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.3rem', color: '#475569', letterSpacing: '2px' }}>
+          <footer style={{ padding: '32px 48px', borderTop: `1px solid ${t.sectionBorder}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: '1.3rem', color: t.textDim, letterSpacing: '2px' }}>
               STRIDEX<span style={{ color: '#06b6d4' }}>-AI</span>
             </span>
-            <span style={{ color: '#334155', fontSize: '13px' }}>
+            <span style={{ color: t.textFooter, fontSize: '13px' }}>
               Powered by MediaPipe + FastAPI · Built for Athletes
             </span>
           </footer>
