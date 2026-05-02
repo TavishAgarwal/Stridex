@@ -1,0 +1,45 @@
+# === OS ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+venv/
+venv311/
+venv_new/
+.venv/
+*.egg
+
+# === Node / React ===
+node_modules/
+build/
+.cache/
+*.log
+npm-debug.log*
+
+# === Environment / Secrets ===
+.env
+.env.*
+!.env.example
+
+# === ML Models (large binaries) ===
+*.task
+
+# === Media / Test files ===
+*.mp4
+
+# === Session / Runtime data ===
+session_history.json
+
+# === Docker ===
+docker-compose.override.yml
